@@ -1,0 +1,7 @@
+torch>=2.0
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+tables>=3.8        # only needed for the .h5 air-quality loaders
+tqdm>=4.65
+matplotlib>=3.7    # optional, for plotting results

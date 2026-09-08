@@ -1,0 +1,27 @@
+# runs, checkpoints, logs
+runs/
+*.pt
+*.ckpt
+*.log
+
+# datasets (large / redistribution-restricted)
+data/*
+!data/.gitkeep
+
+# the paper PDF is not redistributed here
+*.pdf
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# os / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
