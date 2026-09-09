@@ -1,8 +1,12 @@
-# runs, checkpoints, logs
+# runs, logs
 runs/
+*.log
+
+# local checkpoints are ignored, but curated ones under checkpoints/ are kept
 *.pt
 *.ckpt
-*.log
+!checkpoints/**/*.pt
+!checkpoints/**/*.json
 
 # datasets (large / redistribution-restricted)
 data/*

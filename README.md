@@ -150,10 +150,20 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz     --win
 python scripts/run.py --dataset seed4 --seed-root ~/Downloads/seed4     --subjects 12_20150804 --window 100 --stride 100      # straight from the raw tree
 ```
 
-Measured on one subject (316 windows, `--window 100`, point missing 20%): the filtering
-factors settle at `tau_s ~ 0.10`, `tau_t ~ 0.34` - i.e. **the degeneracy described below
-does not occur on EEG**, because the signal is high-frequency enough that the alignment
-term keeps both factors small.
+On the full subject (3160 windows, `--window 100`, point missing 20%, T4 GPU) the
+factors settle at **`tau_t = 0.94`** -- inside the paper's Fig. 3 range, so the
+`tau_xi -> bound` runaway seen on the synthetic random walk does *not* happen on EEG,
+because the signal is high-frequency enough that temporal averaging hurts alignment.
+
+But **`tau_s` collapses to 0.005**, i.e. the spatial half of the prior is switched off
+entirely and the "graph-informed" prior becomes purely temporal. So the degeneracy is not
+avoided on EEG, it just moves from the temporal factor to the spatial one. Under 20%
+scattered point missing each channel still retains 80% of its own samples, so temporal
+context dominates and Problem (5) has little reason to spend on spatial smoothing --
+`--missing block` is the setting where the spatial term should have to earn its keep.
+
+(An earlier note here claimed EEG avoided the degeneracy; that was measured on a
+40-window smoke test and does not hold at full size.)
 
 ## Current results
 
@@ -183,6 +193,31 @@ What *does* check out:
   vs **~2540** for a Gaussian prior on the same batch, a ~26x reduction.
 - Imputation preserves observed entries exactly; 1-step Euler equals `prior + v_0`.
 - Point and block missing hit their target rate exactly; block masks are contiguous.
+
+### SEED-IV, one subject, Kaggle T4
+
+3160 windows of 62 channels x 100 samples, point missing 20%, seed 0, defaults:
+
+| Method | MAE | RMSE | MAPE |
+|---|---|---|---|
+| Mean-S | 0.569 | 0.761 | 173.6% |
+| Mean-T | 0.391 | 0.573 | 129.5% |
+| **Linear** | **0.120** | **0.180** | **48.2%** |
+| KNN | 0.373 | 0.513 | 143.7% |
+| FP | 0.377 | 0.520 | 117.7% |
+| GiFlow (this code) | 0.146 | 0.206 | 55.6% |
+
+11.9 s/epoch on a T4 (vs ~35 s/epoch on the laptop CPU), 5.3 min to early stop.
+
+Linear interpolation still wins, and the training curve says why: **best validation MAE
+lands at epoch 1 (0.1385) and then rises monotonically** for ten straight epochs while
+the train loss keeps falling 0.033 -> 0.013. That is immediate overfitting -- 164k
+parameters against 2212 training windows -- not a model that has converged. Levers, in
+order of expected effect: use all 17 subject-sessions instead of one (~37k windows),
+lower `--lr`, raise `--dropout` / `--weight-decay`, shrink `--hidden` / `--layers`, and
+run the Appendix C.3 search. Also note point missing is linear interpolation's best case;
+the paper's own Table 3 shows Linear degrading from 11.02 to 33.03 MAE on Air-36 when the
+pattern switches to block missing, so `--missing block` is the fairer comparison.
 
 ## Known problem: the filtering factors degenerate
 
