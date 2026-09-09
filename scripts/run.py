@@ -51,6 +51,14 @@ def parse_args(argv=None):
     p.add_argument("--nodes", type=int, default=50)
     p.add_argument("--steps", type=int, default=3000)
     p.add_argument("--sigma", type=float, default=0.1)
+    # SEED-IV knobs
+    p.add_argument("--seed-root", default="data/seed4",
+                   help="SEED-IV root dir, or a packed .npz")
+    p.add_argument("--subjects", nargs="*", default=None)
+    p.add_argument("--sessions", nargs="*", default=None)
+    p.add_argument("--max-windows-per-subject", type=int, default=None)
+    p.add_argument("--channel-dropout", action="store_true",
+                   help="mark whole EEG channels missing (dead-electrode setting)")
     # optimisation
     p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--patience", type=int, default=10)
@@ -84,6 +92,16 @@ def build(args, seed):
     kw = {}
     if args.dataset.lower().startswith("syn"):
         kw = dict(n_nodes=args.nodes, n_steps=args.steps, sigma=args.sigma, seed=seed)
+    elif args.dataset.lower() in ("seed4", "seed-iv", "seediv", "seed_iv"):
+        kw = dict(
+            root=args.seed_root,
+            window=args.window,
+            subjects=tuple(args.subjects) if args.subjects else None,
+            sessions=tuple(args.sessions) if args.sessions else None,
+            max_windows_per_subject=args.max_windows_per_subject,
+            threshold=args.threshold,
+            channel_dropout=args.channel_dropout,
+        )
     else:
         kw = dict(threshold=args.threshold)
     bundle = load_dataset(args.dataset, **kw)

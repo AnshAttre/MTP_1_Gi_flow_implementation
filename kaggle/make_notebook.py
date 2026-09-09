@@ -1,0 +1,276 @@
+"""Generate kaggle/giflow_seed_iv.ipynb. Run: python kaggle/make_notebook.py"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+REPO = "https://github.com/AnshAttre/MTP_1_Gi_flow_implementation.git"
+
+MD_INTRO = """# GiFlow on SEED-IV — Kaggle GPU training
+
+Graph-Informed Flow Matching for spatiotemporal imputation (arXiv:2606.06682),
+applied to SEED-IV EEG: **62 electrodes = graph nodes**, samples within a window
+= timesteps. The task is reconstructing dropped channels / corrupted stretches.
+
+**Before running:**
+1. Notebook settings → **Accelerator: GPU T4 x2** (or P100).
+2. Notebook settings → **Internet: On** (needed for `git clone`).
+3. Add your packed SEED-IV `.npz` via **+ Add Input → Datasets**, then fix
+   `SEED_NPZ` in the config cell to match its path.
+
+Make the `.npz` locally first:
+```bash
+python scripts/pack_seed_iv.py --root ~/Downloads/seed4 --out data/seed_iv_all.npz
+```
+"""
+
+CELL_GPU = """import subprocess, torch, os
+print(subprocess.run(["nvidia-smi"], capture_output=True, text=True).stdout)
+print("torch", torch.__version__, "| cuda available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    for i in range(torch.cuda.device_count()):
+        p = torch.cuda.get_device_properties(i)
+        print(f"  GPU {i}: {p.name}, {p.total_memory/1e9:.1f} GB")
+else:
+    print("NO GPU -- switch the accelerator on in Notebook settings, or this "
+          "will be no faster than your laptop.")
+"""
+
+CELL_CLONE = f"""# Clone the implementation. Re-run safely: it pulls if already present.
+import os, subprocess
+REPO = "{REPO}"
+if not os.path.exists("/kaggle/working/giflow_repo"):
+    subprocess.run(["git", "clone", "--depth", "1", REPO,
+                    "/kaggle/working/giflow_repo"], check=True)
+else:
+    subprocess.run(["git", "-C", "/kaggle/working/giflow_repo", "pull"], check=True)
+os.chdir("/kaggle/working/giflow_repo")
+print(subprocess.run(["git", "log", "--oneline", "-1"], capture_output=True,
+                     text=True).stdout)
+"""
+
+CELL_INPUTS = """# Locate the SEED-IV input. Prints every candidate so you can pick the path.
+import glob, os
+for root, dirs, files in os.walk("/kaggle/input"):
+    depth = root.count(os.sep) - 2
+    if depth <= 2:
+        for f in files:
+            p = os.path.join(root, f)
+            print(f"{os.path.getsize(p)/1e6:10.1f} MB  {p}")
+"""
+
+CELL_CONFIG = '''# ---------------------------------------------------------------- config
+# Point this at the .npz you uploaded (see the listing above), or at a folder
+# containing <session>/<subject>/X_prc1.npy if you uploaded the raw tree.
+SEED_NPZ = "/kaggle/input/seed-iv-giflow/seed_iv_all.npz"
+
+WINDOW      = 100      # samples per window; temporal attention is O(WINDOW^2)
+STRIDE      = 100      # 100 = non-overlapping. Lower = more windows, slower.
+MISSING     = "point"  # "point" or "block"
+RHO         = 0.2      # fraction of data removed and scored
+EPOCHS      = 300      # early stopping usually fires long before this
+PATIENCE    = 10
+BATCH_SIZE  = 32
+HIDDEN      = 64
+LAYERS      = 4
+LR          = 1e-3
+EULER_STEPS = 20       # 5 is ~4x faster and barely worse (paper Table 9)
+SEEDS       = 1        # the paper reports 5
+MAX_WINDOWS = None     # e.g. 4000 to cap a first run
+
+import os
+assert os.path.exists(SEED_NPZ), f"not found: {SEED_NPZ} -- fix the path above"
+print("input ok:", SEED_NPZ, f"({os.path.getsize(SEED_NPZ)/1e6:.0f} MB)")
+'''
+
+CELL_TESTS = """# Sanity: the 40 correctness checks should all pass before you spend GPU hours.
+import subprocess, sys
+r = subprocess.run([sys.executable, "tests/test_giflow.py"],
+                   capture_output=True, text=True)
+for line in r.stdout.strip().splitlines()[-12:]:
+    print(line)
+print("exit", r.returncode)
+"""
+
+CELL_TRAIN = '''# ------------------------------------------------------------- training
+import subprocess, sys, time
+
+cmd = [
+    sys.executable, "scripts/run.py",
+    "--dataset", "seed4",
+    "--seed-root", SEED_NPZ,
+    "--window", str(WINDOW),
+    "--stride", str(STRIDE),
+    "--missing", MISSING,
+    "--rho", str(RHO),
+    "--epochs", str(EPOCHS),
+    "--patience", str(PATIENCE),
+    "--batch-size", str(BATCH_SIZE),
+    "--hidden", str(HIDDEN),
+    "--layers", str(LAYERS),
+    "--lr", str(LR),
+    "--euler-steps", str(EULER_STEPS),
+    "--seeds", str(SEEDS),
+    "--device", "cuda",
+    "--out", "/kaggle/working/runs/seed4_gpu",
+]
+if MAX_WINDOWS:
+    cmd += ["--max-windows", str(MAX_WINDOWS)]
+
+print(" ".join(cmd), flush=True)
+t0 = time.time()
+# stream the log live so you can watch val MAE instead of waiting blind
+proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, bufsize=1)
+for line in proc.stdout:
+    print(line, end="", flush=True)
+proc.wait()
+print(f"\\nexit {proc.returncode} after {(time.time()-t0)/60:.1f} min")
+'''
+
+CELL_RESULTS = '''# ---------------------------------------------------------------- results
+import json, glob
+for f in sorted(glob.glob("/kaggle/working/runs/**/summary.json", recursive=True)):
+    d = json.load(open(f))
+    a = d["aggregate"]
+    print(f)
+    print("  MAE  %.4f +- %.4f" % (a["mae"]["mean"], a["mae"]["std"]))
+    print("  RMSE %.4f +- %.4f" % (a["rmse"]["mean"], a["rmse"]["std"]))
+    print("  MAPE %.2f%% +- %.2f" % (a["mape"]["mean"], a["mape"]["std"]))
+for f in sorted(glob.glob("/kaggle/working/runs/**/baselines.json", recursive=True)):
+    print("\\nbaselines:", f)
+    for k, v in json.load(open(f)).items():
+        print("  %-8s MAE %8.4f  RMSE %8.4f" % (k, v["mae"], v["rmse"]))
+'''
+
+CELL_CURVE = '''# Learning curve + per-epoch timing
+import json, glob
+import matplotlib.pyplot as plt
+
+hs = sorted(glob.glob("/kaggle/working/runs/**/history.json", recursive=True))
+if hs:
+    h = json.load(open(hs[0]))
+    ep = [e for e in h["epochs"] if "val" in e]
+    fig, ax = plt.subplots(1, 3, figsize=(15, 3.6))
+    ax[0].plot([e["epoch"] for e in h["epochs"]], [e["train_loss"] for e in h["epochs"]])
+    ax[0].set_title("train loss"); ax[0].set_xlabel("epoch"); ax[0].set_yscale("log")
+    ax[1].plot([e["epoch"] for e in ep], [e["val"]["mae"] for e in ep])
+    ax[1].set_title("val MAE"); ax[1].set_xlabel("epoch")
+    ax[2].plot([e["epoch"] for e in h["epochs"]], [e["seconds"] for e in h["epochs"]])
+    ax[2].set_title("seconds / epoch"); ax[2].set_xlabel("epoch")
+    for a in ax: a.grid(alpha=.3)
+    plt.tight_layout(); plt.show()
+    print("tau:", h["tau"]["tau_s"], h["tau"]["tau_t"] if h["tau"] else None)
+    print("transport cost:", h.get("transport_cost"))
+    print("best epoch:", h["best"], "| total %.1f min" % (h["train_seconds"]/60))
+'''
+
+CELL_SAVE = '''# Zip the checkpoints + logs so they survive as notebook output.
+import shutil, os
+os.makedirs("/kaggle/working/out", exist_ok=True)
+shutil.make_archive("/kaggle/working/out/giflow_runs", "zip", "/kaggle/working/runs")
+print("saved:", os.path.getsize("/kaggle/working/out/giflow_runs.zip")/1e6, "MB")
+print("Commit the notebook (Save Version) to keep this as a downloadable output.")
+'''
+
+MD_ABLATE = """## Ablations
+
+Each `--variant` reproduces one row of the paper's Tables 4/5. On GPU these are
+cheap enough to run in the same session.
+"""
+
+CELL_ABLATE = '''import subprocess, sys
+VARIANTS = ["giflow", "fm_gauss", "gfm", "tfm", "no_propagation"]
+for v in VARIANTS:
+    print("=" * 60, "\\n", v, flush=True)
+    subprocess.run([
+        sys.executable, "scripts/run.py", "--dataset", "seed4",
+        "--seed-root", SEED_NPZ, "--window", str(WINDOW), "--stride", str(STRIDE),
+        "--variant", v, "--epochs", "40", "--euler-steps", "5",
+        "--device", "cuda", "--skip-baselines",
+        "--out", f"/kaggle/working/runs/ablate_{v}",
+    ])
+'''
+
+MD_NOTES = """## Notes / gotchas
+
+- **Quota.** Kaggle gives ~30 GPU-hours/week and kills a session at 9 h (12 h
+  without GPU). Interactive sessions also die after ~20 min idle — use
+  *Save Version → Run All* for long training so it runs detached.
+- **`/kaggle/working` is the only writable path** (~20 GB) and is what gets kept
+  as notebook output. `/kaggle/input` is read-only.
+- **Two GPUs are visible on T4 x2 but this code uses one.** No DataParallel is
+  wired in; a second GPU is only useful for running two variants at once.
+- **`WINDOW` drives cost.** Temporal attention is O(WINDOW²) per node, so 1000
+  (the raw SEED-IV window) is not viable; 100 is a reasonable compromise, 250 is
+  4× the attention cost — reduce `BATCH_SIZE` if you raise it.
+- **`--num-workers`** is left at 0. Kaggle gives 4 CPU cores; raising it helps
+  only if data loading, not the GPU, is the bottleneck.
+- **Known issue** (see the repo README): on slowly drifting signals Problem (5)
+  drives `tau_xi` to its bound and degenerates the prior. On EEG this does *not*
+  happen (measured `tau_s≈0.10`, `tau_t≈0.34`) because the signal is
+  high-frequency, so the alignment term keeps the factors small.
+"""
+
+
+def code(src, **kw):
+    return {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": kw,
+        "outputs": [],
+        "source": src.rstrip("\n").split("\n"),
+    }
+
+
+def md(src):
+    return {"cell_type": "markdown", "metadata": {},
+            "source": src.rstrip("\n").split("\n")}
+
+
+def build():
+    cells = [
+        md(MD_INTRO),
+        md("## 1. Check the GPU"),
+        code(CELL_GPU),
+        md("## 2. Clone the implementation"),
+        code(CELL_CLONE),
+        md("## 3. Find the uploaded SEED-IV data"),
+        code(CELL_INPUTS),
+        md("## 4. Config — **edit `SEED_NPZ` here**"),
+        code(CELL_CONFIG),
+        md("## 5. Correctness tests (fast, do this before burning GPU time)"),
+        code(CELL_TESTS),
+        md("## 6. Train"),
+        code(CELL_TRAIN),
+        md("## 7. Results"),
+        code(CELL_RESULTS),
+        code(CELL_CURVE),
+        md("## 8. Persist outputs"),
+        code(CELL_SAVE),
+        md(MD_ABLATE),
+        code(CELL_ABLATE),
+        md(MD_NOTES),
+    ]
+    nb = {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python",
+                           "name": "python3"},
+            "language_info": {"name": "python", "version": "3.11"},
+            "accelerator": "GPU",
+            "kaggle": {"accelerator": "nvidiaTeslaT4", "dataSources": [],
+                       "isInternetEnabled": True, "language": "python",
+                       "sourceType": "notebook"},
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    out = Path(__file__).parent / "giflow_seed_iv.ipynb"
+    out.write_text(json.dumps(nb, indent=1), encoding="utf-8")
+    print("wrote %s (%d cells)" % (out, len(cells)))
+    return out
+
+
+if __name__ == "__main__":
+    build()

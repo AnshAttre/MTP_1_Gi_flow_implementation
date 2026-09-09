@@ -75,6 +75,8 @@ def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def count_params(model) -> int:
@@ -206,7 +208,7 @@ def fit(
 
     best = {"mae": float("inf"), "epoch": -1}
     bad = 0
-    gen = torch.Generator(device="cpu").manual_seed(cfg.seed)
+    gen = torch.Generator(device=device).manual_seed(cfg.seed)
     ckpt = out_dir / "best.pt"
     t_start = time.time()
 

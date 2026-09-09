@@ -67,9 +67,16 @@ def make_eval_mask(
 
 def random_subset_mask(mask, keep_ratio_range=(0.3, 0.9), generator=None):
     """Sample a conditioning submask of `mask` (torch). Used during training to
-    hide extra points so the model must actually predict rather than copy."""
+    hide extra points so the model must actually predict rather than copy.
+
+    A generator is only passed through when its device matches the mask's --
+    torch refuses a CPU generator for a CUDA tensor, so on GPU we draw from the
+    global RNG (already seeded by set_seed) rather than crashing.
+    """
     import torch
 
+    if generator is not None and generator.device.type != mask.device.type:
+        generator = None
     p = torch.empty(mask.shape[0], 1, 1, device=mask.device).uniform_(*keep_ratio_range)
     keep = (torch.rand(mask.shape, device=mask.device, generator=generator) < p).float()
     return mask * keep

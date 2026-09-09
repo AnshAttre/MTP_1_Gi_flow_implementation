@@ -122,6 +122,39 @@ Optional real station distances: `air36_dist.npy` / `aqi_dist.npy`. Without them
 spatial graph falls back to a Gaussian kernel on the value profile, which is a weaker
 graph than the paper's distance-based one.
 
+### SEED-IV (EEG) - extra, not in the paper
+
+SEED-IV is an EEG emotion dataset: 62 electrodes at 250 Hz. It fits the same setting
+with **electrodes as graph nodes**, so the task becomes reconstructing dropped channels
+or corrupted stretches of signal. Preprocessed layout expected:
+
+```
+<root>/<session>/<subject>/X_prc1.npy      # (n_windows, 62, 1000)
+<root>/<session>/<subject>/labels.npy      # (n_windows,) emotion 0..3
+```
+
+Two differences from the paper's datasets, handled in `giflow/data/seed_iv.py`:
+
+- A raw window is 1000 samples. Temporal attention is O(R^2) per node, so 1000 is not
+  usable directly - windows are re-cut to `--window` (100 is a reasonable start).
+- There is no station-distance graph, so the electrode graph is built from the
+  correlation between channels **over the training portion only**, to keep the test
+  split out of the graph. Pass 10-20 montage coordinates instead if you have them.
+
+```bash
+# slim the 5.5 GB download to a single .npz (float32, drops PNGs/.mat duplicates)
+python scripts/pack_seed_iv.py --root ~/Downloads/seed4 --out data/seed_iv_all.npz
+python scripts/pack_seed_iv.py --root ~/Downloads/seed4 --subjects 12_20150804     --out data/seed_iv_one.npz          # ~80 MB, one subject
+
+python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz     --window 100 --stride 100 --missing point --rho 0.2
+python scripts/run.py --dataset seed4 --seed-root ~/Downloads/seed4     --subjects 12_20150804 --window 100 --stride 100      # straight from the raw tree
+```
+
+Measured on one subject (316 windows, `--window 100`, point missing 20%): the filtering
+factors settle at `tau_s ~ 0.10`, `tau_t ~ 0.34` - i.e. **the degeneracy described below
+does not occur on EEG**, because the signal is high-frequency enough that the alignment
+term keeps both factors small.
+
 ## Current results
 
 Synthetic, N=50, R=3000, sigma=0.1, point missing rho=20%, **seed 0 only, no
@@ -182,6 +215,33 @@ alignment term should bound `tau_xi` at a moderate value. Things to try:
    collapses the spatial kernel to a global average, so the paper's `tau` range only
    looks sensible for a normalised Laplacian. A sweep is in the repo history.
 4. Run the Appendix C.3 hyperparameter search; only defaults have been used so far.
+
+## Training on Kaggle (free GPU)
+
+CPU-only training is the bottleneck here, not memory. `kaggle/giflow_seed_iv.ipynb` is a
+ready notebook that clones this repo, finds the uploaded data, runs the tests, trains on
+CUDA and plots the curves.
+
+```bash
+python kaggle/make_notebook.py     # regenerate the notebook after editing the cells
+```
+
+Steps:
+
+1. Pack the data locally (`scripts/pack_seed_iv.py`, above) - one subject is ~80 MB, all
+   17 subject-sessions ~1.3 GB.
+2. Upload it at kaggle.com/datasets -> **New Dataset**.
+3. New Notebook -> **File -> Upload Notebook** -> `kaggle/giflow_seed_iv.ipynb`.
+4. Notebook settings: **Accelerator = GPU T4 x2**, **Internet = On** (needed for the clone).
+5. **+ Add Input -> Datasets** -> your upload, then set `SEED_NPZ` in the config cell to
+   the path the "find the data" cell prints.
+6. **Save Version -> Run All** so it runs detached - interactive sessions are killed
+   after ~20 min idle.
+
+Caveats: ~30 GPU-hours/week quota, 9 h max per session; `/kaggle/working` is the only
+writable path (~20 GB) and is what gets kept as output; T4 x2 exposes two GPUs but this
+code uses one (no DataParallel wired in), so a second GPU only helps for running two
+variants side by side.
 
 ## Hardware notes
 

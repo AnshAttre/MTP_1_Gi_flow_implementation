@@ -202,4 +202,8 @@ def load_dataset(name: str, **kw) -> DatasetBundle:
         return load_air("aqi", **kw)
     if name in ("pems08", "pems-08"):
         return load_pems08(**kw)
+    if name in ("seed4", "seed-iv", "seediv", "seed_iv"):
+        from .seed_iv import load_seed_iv
+
+        return load_seed_iv(**kw)
     raise ValueError("unknown dataset: %r" % name)
