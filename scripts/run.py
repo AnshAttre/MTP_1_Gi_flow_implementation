@@ -71,6 +71,8 @@ def parse_args(argv=None):
     p.add_argument("--alpha-tau", type=float, default=0.01)
     p.add_argument("--tau-epochs", type=int, default=100)
     p.add_argument("--euler-steps", type=int, default=20)
+    p.add_argument("--preservation-weight", type=float, default=0.1,
+                   help="weight of the loss preserving conditioned values")
     p.add_argument("--prior-mode", default="exact", choices=["exact", "taylor"])
     p.add_argument("--prior-renormalize", action="store_true")
     p.add_argument("--max-tau", type=float, default=10.0,
@@ -162,6 +164,7 @@ def main(argv=None):
             max_epochs=args.epochs,
             patience=args.patience,
             euler_steps=args.euler_steps,
+            preservation_weight=args.preservation_weight,
             tau_epochs=args.tau_epochs,
             prior_mode=args.prior_mode,
             prior_renormalize=args.prior_renormalize,

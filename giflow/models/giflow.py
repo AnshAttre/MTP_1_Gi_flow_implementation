@@ -133,9 +133,16 @@ class GiFlow(nn.Module):
         cond_mask: torch.Tensor,
         target_mask: torch.Tensor,
         timestamps: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        preservation_weight: float = 0.1,
+        return_components: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """x_true: (B,N,R) ground truth (only trusted where target_mask/cond_mask are 1).
-        cond_mask: entries visible to the model. target_mask: entries scored."""
+        cond_mask: entries visible to the model. target_mask: entries scored.
+
+        The preservation term scores a one-step endpoint estimate on the
+        visible entries against their original values, so the field learns not
+        to move data that was supplied as conditioning information.
+        """
         x_cond = x_true * cond_mask
         x0 = self.source_sample(x_cond, cond_mask)
         b = x_true.shape[0]
@@ -144,8 +151,21 @@ class GiFlow(nn.Module):
         x_t = (1.0 - t_b) * x0 + t_b * x_true
         u_t = x_true - x0                                  # Eq. (10)
         v_t = self.vector_field(x_t, x_cond, cond_mask, t, timestamps)
-        denom = target_mask.sum().clamp_min(1.0)
-        return (((v_t - u_t) * target_mask) ** 2).sum() / denom
+        target_denom = target_mask.sum().clamp_min(1.0)
+        flow_loss = (((v_t - u_t) * target_mask) ** 2).sum() / target_denom
+
+        # x_t + (1-t)v_t estimates the endpoint x_true; score only values
+        # that were visible to the model and must therefore be preserved.
+        endpoint = x_t + (1.0 - t_b) * v_t
+        cond_denom = cond_mask.sum().clamp_min(1.0)
+        preservation_loss = (((endpoint - x_true) * cond_mask) ** 2).sum() / cond_denom
+        total = flow_loss + preservation_weight * preservation_loss
+        if return_components:
+            return total, {
+                "flow_loss": flow_loss,
+                "preservation_loss": preservation_loss,
+            }
+        return total
 
     # --------------------------------------------------------------- sampling
     @torch.no_grad()

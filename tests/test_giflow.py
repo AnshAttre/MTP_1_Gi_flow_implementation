@@ -164,12 +164,15 @@ def test_vector_field_and_flow():
     v = model.vector_field(x, x * m, m, t)
     check("vector field output shape", tuple(v.shape) == (3, 20, 12))
 
-    loss = model.loss(x, m, m)
+    loss, components = model.loss(x, m, m, return_components=True)
     loss.backward()
     n_grad = sum(1 for p in model.vector_field.parameters() if p.grad is not None
                  and p.grad.abs().sum() > 0)
     n_tot = sum(1 for _ in model.vector_field.parameters())
     check("loss is finite", torch.isfinite(loss).item(), "%.4f" % float(loss.detach()))
+    check("preservation loss is finite",
+          torch.isfinite(components["preservation_loss"]).item(),
+          "%.4f" % float(components["preservation_loss"].detach()))
     check("gradients reach the vector field", n_grad > 0.8 * n_tot,
           "%d/%d tensors" % (n_grad, n_tot))
 

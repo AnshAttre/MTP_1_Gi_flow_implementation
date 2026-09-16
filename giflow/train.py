@@ -39,6 +39,7 @@ class TrainConfig:
     ema_decay: float = 0.9999
     euler_steps: int = 20
     grad_clip: float = 1.0
+    preservation_weight: float = 0.1
     # prior
     tau_s_init: float = 1.0
     tau_t_init: float = 1.0
@@ -214,7 +215,7 @@ def fit(
 
     for epoch in range(cfg.max_epochs):
         model.train()
-        tot, nb = 0.0, 0
+        tot, flow_tot, preservation_tot, nb = 0.0, 0.0, 0.0, 0
         te0 = time.time()
         for batch in train_loader:
             x_true = batch["x_true"].to(device)
@@ -225,7 +226,14 @@ def fit(
             target = cond_full - cond
             if float(target.sum()) == 0:
                 target = cond_full
-            loss = model.loss(x_true, cond, target, _timestamps(batch, device))
+            loss, components = model.loss(
+                x_true,
+                cond,
+                target,
+                _timestamps(batch, device),
+                preservation_weight=cfg.preservation_weight,
+                return_components=True,
+            )
             opt.zero_grad(set_to_none=True)
             loss.backward()
             if cfg.grad_clip:
@@ -233,11 +241,21 @@ def fit(
             opt.step()
             ema.update(model)
             tot += float(loss.detach())
+            flow_tot += float(components["flow_loss"].detach())
+            preservation_tot += float(components["preservation_loss"].detach())
             nb += 1
         train_loss = tot / max(nb, 1)
+        flow_loss = flow_tot / max(nb, 1)
+        preservation_loss = preservation_tot / max(nb, 1)
         epoch_time = time.time() - te0
 
-        rec = {"epoch": epoch, "train_loss": train_loss, "seconds": epoch_time}
+        rec = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "flow_loss": flow_loss,
+            "preservation_loss": preservation_loss,
+            "seconds": epoch_time,
+        }
         if (epoch + 1) % cfg.eval_every == 0:
             val = evaluate(ema.module(), val_loader, scaler, cfg, device)
             rec["val"] = val
