@@ -89,6 +89,11 @@ python scripts/run.py --dataset pems08 --missing point --rho 0.2
 # 5 trials, as the paper reports (seeds 0..4)
 python scripts/run.py --dataset synthetic --seeds 5
 
+# whole-electrode recovery: hide half the channels (SEED-IV-style)
+python scripts/run.py --dataset seed4 --missing channel --rho 0.5 \
+  --train-channel-drop-prob 0.5 --min-tau-s 0.25 \
+  --clamp-observed-each-step
+
 # ablations (Tables 4 and 5)
 python scripts/run.py --variant fm_gauss          # Gaussian prior
 python scripts/run.py --variant gfm               # spatial-only prior
@@ -104,7 +109,8 @@ python scripts/benchmark.py --threads 12
 ```
 
 Useful flags: `--max-windows` (cap the dataset), `--stride` (thin overlapping windows),
-`--euler-steps`, `--max-tau`, `--normalized-laplacian`, `--prior-renormalize`,
+`--euler-steps`, `--max-tau`, `--min-tau-s`, `--normalized-laplacian`,
+`--prior-renormalize`, `--train-channel-drop-prob`, `--clamp-observed-each-step`,
 `--threads`, `--skip-baselines`.
 
 ## Datasets

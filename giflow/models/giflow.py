@@ -82,12 +82,14 @@ class GiFlow(nn.Module):
         learn_temporal_prior: bool = True,
         prior_renormalize: bool = False,
         max_tau: float | None = 10.0,
+        min_tau_s: float = 0.0,
         gaussian_prior: bool = False,
         max_len: int = 512,
         n_timestamp_classes: tuple[int, ...] = (),
         use_spatial_attention: bool = True,
         use_temporal_attention: bool = True,
         use_propagation: bool = True,
+        clamp_observed_each_step: bool = False,
     ):
         super().__init__()
         self.gaussian_prior = gaussian_prior
@@ -102,6 +104,7 @@ class GiFlow(nn.Module):
             learn_temporal=learn_temporal_prior,
             renormalize=prior_renormalize,
             max_tau=max_tau,
+            min_tau_s=min_tau_s,
         )
         self.vector_field = GiFlowVectorField(
             adj_s,
@@ -118,6 +121,7 @@ class GiFlow(nn.Module):
             use_temporal_attention=use_temporal_attention,
             use_propagation=use_propagation,
         )
+        self.clamp_observed_each_step = clamp_observed_each_step
 
     # ------------------------------------------------------------------ prior
     def source_sample(self, x_cond: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
@@ -189,6 +193,8 @@ class GiFlow(nn.Module):
         for i in range(n_steps):
             t = torch.full((x.shape[0],), i * dt, device=x.device)
             x = x + dt * self.vector_field(x, x_cond, cond_mask, t, timestamps)
+            if self.clamp_observed_each_step:
+                x = cond_mask * x_obs + (1.0 - cond_mask) * x
         return cond_mask * x_obs + (1.0 - cond_mask) * x
 
     @torch.no_grad()

@@ -42,7 +42,7 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", default="synthetic")
     p.add_argument("--variant", default="giflow", choices=sorted(VARIANTS))
-    p.add_argument("--missing", default="point", choices=["point", "block"])
+    p.add_argument("--missing", default="point", choices=["point", "block", "channel"])
     p.add_argument("--rho", type=float, default=0.2)
     p.add_argument("--window", type=int, default=24)
     p.add_argument("--stride", type=int, default=1)
@@ -73,10 +73,16 @@ def parse_args(argv=None):
     p.add_argument("--euler-steps", type=int, default=20)
     p.add_argument("--preservation-weight", type=float, default=0.1,
                    help="weight of the loss preserving conditioned values")
+    p.add_argument("--clamp-observed-each-step", action="store_true",
+                   help="restore conditioned values after every Euler update")
+    p.add_argument("--train-channel-drop-prob", type=float, default=0.0,
+                   help="probability of hiding each electrode during training")
     p.add_argument("--prior-mode", default="exact", choices=["exact", "taylor"])
     p.add_argument("--prior-renormalize", action="store_true")
     p.add_argument("--max-tau", type=float, default=10.0,
                    help="upper bound on the filtering factors; 0 disables the bound")
+    p.add_argument("--min-tau-s", type=float, default=0.0,
+                   help="lower bound on spatial filtering; use >0 to force smoothing")
     p.add_argument("--normalized-laplacian", action="store_true",
                    help="use the symmetric normalised Laplacian instead of D-A")
     # budget controls, important on CPU
@@ -165,10 +171,13 @@ def main(argv=None):
             patience=args.patience,
             euler_steps=args.euler_steps,
             preservation_weight=args.preservation_weight,
+            clamp_observed_each_step=args.clamp_observed_each_step,
+            train_channel_drop_prob=args.train_channel_drop_prob,
             tau_epochs=args.tau_epochs,
             prior_mode=args.prior_mode,
             prior_renormalize=args.prior_renormalize,
             max_tau=(None if args.max_tau <= 0 else args.max_tau),
+            min_tau_s=args.min_tau_s,
             normalized_laplacian=args.normalized_laplacian,
             seed=seed,
             device=args.device,

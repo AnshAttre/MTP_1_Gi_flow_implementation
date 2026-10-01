@@ -122,6 +122,7 @@ class GraphInformedPrior(nn.Module):
         learn_temporal: bool = True,
         renormalize: bool = False,
         max_tau: float | None = 10.0,
+        min_tau_s: float = 0.0,
     ):
         super().__init__()
         self.kernel_s = HeatKernel(lap_s, mode=mode, order=order)
@@ -130,8 +131,11 @@ class GraphInformedPrior(nn.Module):
         self.learn_temporal = learn_temporal
         self.renormalize = renormalize
         self.max_tau = max_tau
+        self.min_tau_s = float(min_tau_s)
+        if self.min_tau_s < 0 or (max_tau is not None and self.min_tau_s >= max_tau):
+            raise ValueError("min_tau_s must be non-negative and below max_tau")
         self.raw_tau_s = nn.Parameter(
-            torch.tensor(self._to_raw(tau_s)), requires_grad=learn_spatial
+            torch.tensor(self._to_raw(tau_s, self.min_tau_s)), requires_grad=learn_spatial
         )
         self.raw_tau_t = nn.Parameter(
             torch.tensor(self._to_raw(tau_t)), requires_grad=learn_temporal
@@ -144,22 +148,23 @@ class GraphInformedPrior(nn.Module):
     # sigmoid, because Eq. (5) leaves tau_xi unbounded (its smoothness term only
     # involves L_eta) and a temporally flat prior can otherwise run away to
     # tau_xi -> inf on slowly drifting signals.
-    def _to_raw(self, tau: float) -> float:
+    def _to_raw(self, tau: float, minimum: float = 0.0) -> float:
         if self.max_tau is None:
-            return _inv_softplus(tau)
-        frac = min(max(float(tau) / self.max_tau, 1e-6), 1 - 1e-6)
+            return _inv_softplus(float(tau) - minimum)
+        span = self.max_tau - minimum
+        frac = min(max((float(tau) - minimum) / span, 1e-6), 1 - 1e-6)
         return math.log(frac / (1.0 - frac))
 
-    def _from_raw(self, raw: torch.Tensor) -> torch.Tensor:
+    def _from_raw(self, raw: torch.Tensor, minimum: float = 0.0) -> torch.Tensor:
         if self.max_tau is None:
-            return F.softplus(raw)
-        return self.max_tau * torch.sigmoid(raw)
+            return minimum + F.softplus(raw)
+        return minimum + (self.max_tau - minimum) * torch.sigmoid(raw)
 
     @property
     def tau_s(self) -> torch.Tensor:
         if not self.learn_spatial:
             return torch.zeros((), device=self.raw_tau_s.device)
-        return self._from_raw(self.raw_tau_s)
+        return self._from_raw(self.raw_tau_s, self.min_tau_s)
 
     @property
     def tau_t(self) -> torch.Tensor:

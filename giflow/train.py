@@ -40,6 +40,7 @@ class TrainConfig:
     euler_steps: int = 20
     grad_clip: float = 1.0
     preservation_weight: float = 0.1
+    clamp_observed_each_step: bool = False
     # prior
     tau_s_init: float = 1.0
     tau_t_init: float = 1.0
@@ -50,6 +51,7 @@ class TrainConfig:
     prior_order: int = 10
     prior_renormalize: bool = False
     max_tau: float | None = 10.0
+    min_tau_s: float = 0.0
     normalized_laplacian: bool = False
     # variants
     gaussian_prior: bool = False          # FM-Gauss
@@ -60,6 +62,7 @@ class TrainConfig:
     use_propagation: bool = True
     # training-time extra masking so the model predicts instead of copying
     train_keep_range: tuple = (0.3, 0.9)
+    train_channel_drop_prob: float = 0.0
     # misc
     seed: int = 0
     device: str = "cpu"
@@ -150,12 +153,14 @@ def fit(
         learn_temporal_prior=cfg.learn_temporal_prior,
         prior_renormalize=cfg.prior_renormalize,
         max_tau=cfg.max_tau,
+        min_tau_s=cfg.min_tau_s,
         gaussian_prior=cfg.gaussian_prior,
         max_len=max(512, train_ds.window),
         n_timestamp_classes=n_timestamp_classes,
         use_spatial_attention=cfg.use_spatial_attention,
         use_temporal_attention=cfg.use_temporal_attention,
         use_propagation=cfg.use_propagation,
+        clamp_observed_each_step=cfg.clamp_observed_each_step,
     ).to(device)
 
     history = {"tau": None, "epochs": [], "config": asdict(cfg)}
@@ -222,7 +227,12 @@ def fit(
             obs = batch["observed_mask"].to(device)
             cond_full = batch["cond_mask"].to(device)
             # hide a random subset of the visible entries; score on what we hid
-            cond = random_subset_mask(cond_full, cfg.train_keep_range, generator=gen)
+            cond = random_subset_mask(
+                cond_full,
+                cfg.train_keep_range,
+                channel_drop_prob=cfg.train_channel_drop_prob,
+                generator=gen,
+            )
             target = cond_full - cond
             if float(target.sum()) == 0:
                 target = cond_full

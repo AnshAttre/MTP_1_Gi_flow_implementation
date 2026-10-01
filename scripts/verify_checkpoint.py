@@ -72,6 +72,7 @@ def main(argv=None):
         n_mp_layers=cfg["n_mp_layers"], k_hops=cfg["k_hops"],
         dropout=cfg["dropout"], prior_mode=cfg["prior_mode"],
         prior_order=cfg["prior_order"], max_tau=cfg["max_tau"],
+        min_tau_s=cfg.get("min_tau_s", 0.0),
         gaussian_prior=cfg["gaussian_prior"],
         prior_renormalize=cfg["prior_renormalize"],
         learn_spatial_prior=cfg["learn_spatial_prior"],
@@ -81,6 +82,7 @@ def main(argv=None):
         use_spatial_attention=cfg["use_spatial_attention"],
         use_temporal_attention=cfg["use_temporal_attention"],
         use_propagation=cfg["use_propagation"],
+        clamp_observed_each_step=cfg.get("clamp_observed_each_step", False),
     ).to(args.device)
 
     sd = torch.load(d / "best.pt", map_location=args.device)

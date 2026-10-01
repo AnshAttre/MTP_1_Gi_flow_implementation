@@ -53,6 +53,18 @@ def block_missing(
     return out
 
 
+def channel_missing(mask: np.ndarray, rho: float, rng: np.random.Generator) -> np.ndarray:
+    """Remove a fraction of whole channels for the dead-electrode setting."""
+    n_channels = mask.shape[0]
+    n_drop = min(n_channels, int(round(rho * n_channels)))
+    out = np.zeros_like(mask)
+    if n_drop == 0:
+        return out
+    channels = rng.choice(n_channels, size=n_drop, replace=False)
+    out[channels] = mask[channels]
+    return out
+
+
 def make_eval_mask(
     observed_mask: np.ndarray, strategy: str, rho: float, seed: int = 0, **kw
 ) -> np.ndarray:
@@ -62,10 +74,14 @@ def make_eval_mask(
         return point_missing(observed_mask, rho, rng)
     if strategy == "block":
         return block_missing(observed_mask, rho, rng, **kw)
+    if strategy in ("channel", "electrode"):
+        return channel_missing(observed_mask, rho, rng)
     raise ValueError(f"unknown missing strategy: {strategy!r}")
 
 
-def random_subset_mask(mask, keep_ratio_range=(0.3, 0.9), generator=None):
+def random_subset_mask(
+    mask, keep_ratio_range=(0.3, 0.9), channel_drop_prob=0.0, generator=None
+):
     """Sample a conditioning submask of `mask` (torch). Used during training to
     hide extra points so the model must actually predict rather than copy.
 
@@ -79,4 +95,14 @@ def random_subset_mask(mask, keep_ratio_range=(0.3, 0.9), generator=None):
         generator = None
     p = torch.empty(mask.shape[0], 1, 1, device=mask.device).uniform_(*keep_ratio_range)
     keep = (torch.rand(mask.shape, device=mask.device, generator=generator) < p).float()
+    if channel_drop_prob > 0:
+        channel_keep = (
+            torch.rand(
+                (mask.shape[0], mask.shape[1], 1),
+                device=mask.device,
+                generator=generator,
+            )
+            >= channel_drop_prob
+        ).float()
+        keep = keep * channel_keep
     return mask * keep

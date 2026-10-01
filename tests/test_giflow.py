@@ -152,6 +152,8 @@ def test_prior():
         pb.raw_tau_s.fill_(50.0)
     check("max_tau caps the filtering factor", float(pb.tau_s.detach()) <= 2.0 + 1e-4,
           "tau_s=%.4f" % float(pb.tau_s.detach()))
+    ps = GraphInformedPrior(g["lap_s"], g["lap_t"], 1.0, 1.0, max_tau=2.0, min_tau_s=0.5)
+    check("minimum spatial filtering is enforced", float(ps.tau_s.detach()) >= 0.5)
 
 
 def test_vector_field_and_flow():
@@ -191,6 +193,13 @@ def test_vector_field_and_flow():
     check("1-step Euler == prior + v_0",
           torch.allclose((got * (1 - m)), (expect * (1 - m)), atol=1e-4))
 
+    clamped = GiFlow(hidden=16, n_mp_layers=2, emb_dim=8,
+                     clamp_observed_each_step=True, **g)
+    with torch.no_grad():
+        clamped_pred = clamped.impute(x, m, n_steps=4)
+    check("per-step clamping preserves observed entries",
+          torch.allclose(clamped_pred * m, x * m, atol=1e-5))
+
     # ablations build and run
     for kw in ({"use_spatial_attention": False}, {"use_temporal_attention": False},
                {"use_spatial_attention": False, "use_temporal_attention": False},
@@ -213,6 +222,9 @@ def test_masking_and_metrics():
     runs = [np.diff(np.flatnonzero(ev[i])).tolist() for i in range(20) if ev[i].sum() > 1]
     contig = np.mean([np.mean([d == 1 for d in r]) for r in runs if r])
     check("block missing is mostly contiguous", contig > 0.7, "%.2f contiguous" % contig)
+    ev = make_eval_mask(obs, "channel", 0.5, seed=0)
+    check("channel missing removes half the electrodes",
+          ev.sum() == 10 * 200 and np.all((ev.sum(axis=1) == 0) | (ev.sum(axis=1) == 200)))
 
     # partially observed input: eval mask must never exceed availability
     obs2 = (np.random.default_rng(0).random((20, 200)) > 0.3).astype(float)

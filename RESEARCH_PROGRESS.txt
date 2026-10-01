@@ -1,0 +1,152 @@
+GiFlow Research Progress Report
+================================
+
+Purpose
+-------
+Recover missing EEG values from SEED-IV windows. The target experiment is
+whole-electrode recovery: hide half of the available electrode channels and
+reconstruct them from the remaining channels plus temporal context.
+
+Current model pipeline
+----------------------
+1. Load SEED-IV X_prc1.npy recordings: (windows, channels, samples).
+2. Represent electrodes as graph nodes and samples as time positions.
+3. Build an electrode graph from training-only channel correlations.
+4. Window the signal, normally 62 x 100 per example.
+5. Create conditioning, evaluation, and observed masks.
+6. Normalize using training observations only.
+7. Build spatial and temporal Laplacians.
+8. Create the graph-informed prior:
+
+   X_obs = X * M
+   X_0 = exp(-tau_s L_s) X_obs exp(-tau_t L_t)
+
+9. Sample a linear flow path:
+
+   X_t = (1-t) X_0 + t X_1
+   u_t = X_1 - X_0
+
+10. Train the neural velocity field with:
+
+   L_flow = || M_target * (v_theta - u_t) ||^2
+   X_endpoint = X_t + (1-t) v_theta
+   L_preserve = || M_cond * (X_endpoint - X_1) ||^2
+   L_total = L_flow + preservation_weight * L_preserve
+
+11. At inference, integrate with Euler steps:
+
+   X <- X + (1/n_steps) v_theta(X, X_obs, M, t)
+
+12. Restore observed values and score only artificially hidden values using MAE,
+    RMSE, and MAPE.
+
+Improvements implemented
+------------------------
+A. Whole-electrode evaluation masking
+   --missing channel --rho 0.5
+   Hides 50% of electrodes for the complete window. SEED-IV has 62 channels,
+   so this hides 31; a 64-channel dataset hides 32.
+
+B. Training electrode dropout
+   --train-channel-drop-prob 0.5
+   Randomly hides electrodes during training so the model learns channel
+   reconstruction instead of only scattered point reconstruction.
+
+C. Forced spatial smoothing
+   --min-tau-s 0.25
+   Prevents the learned spatial filtering factor tau_s from collapsing to zero.
+   This is an experiment control, not automatically a claim that the graph is
+   useful.
+
+D. Per-step observed-value clamp
+   --clamp-observed-each-step
+   After every Euler update:
+
+   X <- M * X_obs + (1-M) * X
+
+   This is different from preservation loss. Preservation loss gives a soft
+   gradient signal; clamping hard-constrains the generation trajectory.
+
+E. Higher regularization controls
+   --dropout 0.3, plus existing learning-rate and weight-decay controls.
+
+F. Checkpoint compatibility
+   Old checkpoints continue to load because new options default to the old
+   behavior.
+
+Baseline evidence
+-----------------
+Committed SEED-IV checkpoint, one subject, point missing 20%, seed 0:
+
+   GiFlow                 MAE 0.14626  RMSE 0.20604  MAPE 55.60%
+   Linear interpolation   MAE 0.12004  RMSE 0.17954  MAPE 48.20%
+   tau_s=0.005303, tau_t=0.943472
+
+The spatial factor is nearly zero because random point missing leaves most of
+each channel visible, making temporal context easier and spatial smoothing less
+useful to the filtering objective.
+
+Validation status
+-----------------
+44 repository checks pass, including checks for channel masking, minimum spatial
+smoothing, and per-step clamping. A combined one-epoch synthetic smoke run using
+all new controls completed successfully.
+
+The local machine has:
+   NVIDIA GeForce RTX 4050 Laptop GPU
+   torch 2.14.0+cu130
+   CUDA available: True
+
+Actual SEED-IV retraining is pending because data/ contains no packed .npz or raw
+SEED-IV files. No SEED-IV quality result should be reported until the dataset is
+provided.
+
+Experiment tracking protocol
+----------------------------
+Run one controlled change at a time and record command, output directory, MAE,
+RMSE, MAPE, tau_s, tau_t, best epoch, and a short conclusion.
+
+Recommended order:
+   C0  Existing point-missing control.
+   E1  --missing channel --rho 0.5.
+   E2  E1 + --train-channel-drop-prob 0.5.
+   E3  E2 + --min-tau-s 0.25.
+   E4  E3 + --clamp-observed-each-step.
+   E5  Best configuration over five seeds.
+
+Example SEED-IV GPU command (once the data is present):
+
+python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
+  --window 100 --stride 100 --missing channel --rho 0.5 \
+  --train-channel-drop-prob 0.5 --min-tau-s 0.25 \
+  --clamp-observed-each-step --dropout 0.3 --device cuda \
+  --epochs 300 --seeds 5 --out runs/seed4_channel50_gpu
+
+Results log
+-----------
+C0: committed point-missing checkpoint above.
+E1-E5: pending until actual SEED-IV data is available.
+
+GPU diagnostic run (synthetic, not SEED-IV)
+-------------------------------------------
+Hardware: RTX 4050 Laptop GPU, CUDA enabled. Both runs used N=20, 400 steps,
+window 24, 50% whole-channel masking, seed 0, 10 epochs, hidden 16, two
+message-passing layers, five tau epochs, and five Euler steps.
+
+   Configuration                         MAE     RMSE     MAPE      tau_s   tau_t
+   Channel control                      5.2880  6.8859   403.56%   0.3171  0.2906
+   Channel + all new controls           5.4819  7.0000   430.24%   0.4899  0.2976
+
+The enhanced run kept spatial smoothing active. Its best validation MAE was
+4.7073 at epoch 3 versus 4.6862 at epoch 2 for control, and its final test MAE
+was 0.1939 higher (3.7% worse). This is one seed and a synthetic diagnostic
+only; it does not show that the changes hurt SEED-IV. It does show that forcing spatial smoothing,
+extra electrode dropout, higher dropout, and per-step clamping should be tested
+separately rather than treated as one proven improvement.
+
+Important interpretation rule
+-----------------------------
+A lower error with tau_s approximately zero does not prove spatial learning.
+A forced-spatial run may initially perform worse; that result is still useful
+because it tests whether the graph, mask pattern, and spatial prior are aligned
+with the EEG recovery task.
