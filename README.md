@@ -28,6 +28,72 @@ L     = E_t || M * ( v_t(X_t; theta, M, L) - X_1 + X_tau ) ||^2   # Sec. 3.2
 `(tau_eta, tau_xi)` are *learned* by minimising Problem (5) on the training split, then
 frozen. Sampling is a deterministic Euler integration from `X_tau` to `t = 1`.
 
+## Implementation architecture
+
+The first diagram shows the data path and the separate fitting, training, and
+imputation stages. For SEED-IV, the spatial graph is built from training data;
+channel masking makes whole-electrode recovery the evaluation task.
+
+```mermaid
+flowchart TD
+  A[Dataset loader<br/>SEED-IV, sensor data, or synthetic] --> B[Window signals and split by time]
+  B --> C[Fit normalization on training data]
+  B --> D[Build spatial graph and Laplacian]
+  B --> E[Build temporal graph and Laplacian]
+  C --> F[Training windows]
+  D --> G[GiFlow model]
+  E --> G
+
+  subgraph Train[Training]
+    F --> H[Sample conditioning and target masks<br/>optional channel dropout]
+    H --> I[Stage 1: optimize tau_s and tau_t]
+    I --> J[Freeze graph-informed prior]
+    H --> K[Stage 2: flow-matching training]
+    J --> K
+    K --> L[EMA weights and validation]
+    L --> M[Early stopping and best checkpoint]
+  end
+
+  subgraph Infer[Imputation and evaluation]
+    N[Evaluation window] --> O[Hide entries for task<br/>point, block, or whole channel]
+    O --> P[Observed values and conditioning mask]
+    P --> Q[Graph-informed prior: X_0]
+    Q --> R[Euler integration of learned vector field]
+    R --> S[Restore observed values]
+    S --> T[Score hidden targets<br/>MAE, RMSE, MAPE]
+  end
+
+  M --> R
+  G -. supplies prior and vector field .-> Q
+  G -. supplies vector field .-> R
+  D --> G
+  E --> G
+```
+
+Inside the vector field, the current signal, observed signal, and mask are
+projected to hidden features. Spatial and temporal attention are optional
+branches; their outputs are fused with the flow-time embedding before
+spatiotemporal propagation and the output head predict the velocity.
+
+```mermaid
+flowchart LR
+  A[Current state X_t] --> D[Input projection]
+  B[Observed signal X_cond] --> D
+  C[Conditioning mask M] --> D
+  D --> E[Hidden features]
+  E --> F[Spatial attention]
+  E --> G[Temporal attention]
+  E --> H[Feature branch]
+  I[Flow time t] --> J[Time embedding]
+  F --> K[Concatenate and fuse]
+  G --> K
+  H --> K
+  J --> K
+  K --> L[Spatiotemporal message propagation]
+  L --> N[Output MLP]
+  N --> O[Predicted velocity v_theta]
+```
+
 ## Paper → code map
 
 | Paper | Code |
