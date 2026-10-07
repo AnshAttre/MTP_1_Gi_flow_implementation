@@ -114,9 +114,20 @@ metric from expectation.
 J0/J1 both used seed 0, 50% channel masking, 0.5 training channel dropout,
 the same 4,000-window-per-source split, and RTX 4050. The two roots contain
 matched reconstruction variants of the same recordings, not independent
-cohorts. J0 used 20 Euler steps and J1 used 5; matched-step evaluation is needed
-before drawing a model-quality conclusion. Each test metric covers 2.48M hidden
-entries per source.
+cohorts. Each test metric covers 2.48M hidden entries per source. Both
+checkpoints were reevaluated on the same test batches at matched sampler settings:
+
+| Model | Euler | PCC | NMSE | PSNR | SNR | MAE | RMSE |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| GiFlow | 5 | 0.7968 | 0.3658 | 40.54 | 4.37 | 4.305 | 10.624 |
+| SRG-flow | 5 | 0.7996 | 0.5476 | 38.79 | 2.62 | 6.947 | 12.999 |
+| GiFlow | 20 | 0.7976 | 0.3674 | 40.52 | 4.35 | 4.324 | 10.648 |
+| SRG-flow | 20 | 0.8014 | 0.6909 | 37.78 | 1.61 | 8.211 | 14.602 |
+
+The GiFlow checkpoint wins on NMSE/PSNR/SNR/MAE/RMSE at both step counts;
+SRG-flow PCC is about 0.003 higher. Training checkpoint selection still used
+different validation Euler counts, so this remains preliminary until both are
+retrained with identical validation settings and multiple seeds.
 
 ### GPU diagnostic (synthetic only)
 

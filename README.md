@@ -379,12 +379,25 @@ independent cohorts. The run used seed 0, 4,000 uniformly thinned windows per so
 | GiFlow control | 20 | 21 | 0.7976 | 0.3674 | 40.52 | 4.35 | 4.324 | 10.648 |
 | SRG-flow | 5 | 5 | 0.7996 | 0.5476 | 38.79 | 2.62 | 6.947 | 12.999 |
 
-The control used 20 Euler steps and SRG-flow used 5 to reduce evaluation time, so this
-is not a controlled architectural comparison. PCC is nearly unchanged; NMSE, SNR, MAE,
-and RMSE are worse in the measured SRG-flow run. Its learned factors also nearly turn
-off temporal smoothing (`tau_t=0.000080`). Re-evaluate both checkpoints with matched
-Euler settings and investigate the prior before claiming an improvement. PSNR is
-computed using the peak-to-peak range of scored targets and is sensitive to outliers.
+The training runs originally used different Euler settings for validation, so their
+headline rows are not a controlled architectural comparison. Both saved checkpoints
+were then re-evaluated on the same test batches at matched settings:
+
+| Model | Euler steps | PCC | NMSE | PSNR (dB) | SNR (dB) | MAE | RMSE |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| GiFlow control | 5 | 0.7968 | 0.3658 | 40.54 | 4.37 | 4.305 | 10.624 |
+| SRG-flow | 5 | 0.7996 | 0.5476 | 38.79 | 2.62 | 6.947 | 12.999 |
+| GiFlow control | 20 | 0.7976 | 0.3674 | 40.52 | 4.35 | 4.324 | 10.648 |
+| SRG-flow | 20 | 0.8014 | 0.6909 | 37.78 | 1.61 | 8.211 | 14.602 |
+
+On these checkpoints, the original GiFlow objective performs better on NMSE, PSNR,
+SNR, MAE, and RMSE at both inference settings; SRG-flow's PCC is only about 0.003
+higher. This points toward sticking with the original training method for now. However,
+the checkpoints were selected using different validation Euler counts (20 for GiFlow,
+5 for SRG-flow), so a final claim still needs retraining and early stopping under one
+shared setting and multiple seeds. Both runs also drive `tau_t` close to zero, so the
+prior-fitting issue remains. PSNR uses the peak-to-peak range of scored targets and is
+sensitive to outliers.
 
 ## Known problem: the filtering factors degenerate
 

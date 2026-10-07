@@ -170,13 +170,24 @@ RTX 4050:
    GiFlow       20      21       0.7976  0.3674  40.52    4.35    4.324  10.648  0.0377 0.000165
    SRG-flow      5       5       0.7996  0.5476  38.79    2.62    6.947  12.999  0.0398 0.000080
 
-Each test score covers 4,960,000 hidden entries (2,480,000 per source). The
-modified run used 5 Euler steps to reduce GPU evaluation time; the control used
-20. Therefore these are not a controlled model comparison. PCC is essentially
-unchanged, while NMSE/SNR/MAE are worse for the SRG-flow run as measured. Re-run
-both checkpoints at matched Euler settings before attributing the gap to the
-architecture. PSNR uses the scored-target peak-to-peak range and is sensitive to
-outliers; compare it only under the same evaluation set and formula.
+Each test score covers 4,960,000 hidden entries (2,480,000 per source). Both
+saved checkpoints were re-evaluated on identical test batches at 5 and 20 Euler
+steps:
+
+   Model      Euler  PCC     NMSE    PSNR dB  SNR dB  MAE    RMSE
+   GiFlow       5    0.7968  0.3658  40.54    4.37   4.305  10.624
+   SRG-flow     5    0.7996  0.5476  38.79    2.62   6.947  12.999
+   GiFlow      20    0.7976  0.3674  40.52    4.35   4.324  10.648
+   SRG-flow    20    0.8014  0.6909  37.78    1.61   8.211  14.602
+
+Original GiFlow is better on NMSE, PSNR, SNR, MAE, and RMSE at both matched
+inference settings; SRG-flow PCC is about 0.003 higher. This favors the original
+training method for now. The checkpoints were nevertheless selected under
+different validation Euler counts (20 and 5 respectively), so retrain both under
+one shared setting and multiple seeds before making a final architecture claim.
+Both runs drive `tau_t` nearly to zero; investigate prior fitting as a separate
+issue. PSNR uses the scored-target peak-to-peak range and is sensitive to
+outliers.
 
 Outputs:
    runs/seed4_reconstructed_pair_joint_srg_gpu
@@ -207,3 +218,18 @@ A lower error with tau_s approximately zero does not prove spatial learning.
 A forced-spatial run may initially perform worse; that result is still useful
 because it tests whether the graph, mask pattern, and spatial prior are aligned
 with the EEG recovery task.
+
+
+
+/// do not remove this part ///
+
+SRGFlow = GiFlow learns the flow direction + an extra module learns how to correct that direction using the observed EEG condition.
+We added two things:
+Residual Direction Module
+Step-Aware Modulation Module
+GiFlow starts with a graph-filtered estimate of the missing signal, 
+In simple terms, it learns “which way should I move this signal to make it correct?” At inference, it follows those learned directions with Euler steps.
+
+SRGDiff’s actual method is different: it first trains a VAE to represent high-density EEG, then adds Gaussian noise to those latent representations and trains a denoiser to remove it. Its residual and step-aware modules guide that diffusion process. Copyingthat training method directly would mean changing GiFlow’s path, target, and sampling procedure; it is not just adding a loss term.
+
+Our srg_flow experiment did not switch to diffusion. It kept GiFlow’s flow objective and added SRG-inspired residual and step-aware corrections to its predicted velocity. That makes it a hybrid adaptation, not a reproduction of SRGDiff.
