@@ -44,7 +44,7 @@ Source: committed SEED-IV checkpoint, one subject, point missing 20%, seed 0.
 | Linear interpolation | 0.12004 | 0.17954 | 48.20% | current baseline winner |
 
 Filtering factors in the checkpoint: `tau_s=0.005303`, `tau_t=0.943472`.
-All repository correctness checks pass; the suite currently has 44 checks.
+All repository correctness checks pass; 51 checks pass across both test scripts.
 
 The new controls also pass a one-epoch synthetic end-to-end smoke:
 `channel` masking reported `eval_rate=0.500`, and the combined channel-drop,
@@ -55,6 +55,7 @@ an interface check, not a quality result.
 
 | Control | CLI | Purpose |
 |---|---|---|
+| SRGDiff-inspired flow | `--variant srg_flow` | Residual velocity correction plus step-aware scale/bias regularization |
 | Point missing | `--missing point --rho 0.2` | Existing scattered-value control |
 | Block missing | `--missing block --rho 0.2` | Existing contiguous temporal corruption |
 | Whole-channel missing | `--missing channel --rho 0.5` | Hide 50% of electrodes and score all their samples |
@@ -99,14 +100,23 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
 Use `pending` until the command has actually run. Never fill in an unmeasured
 metric from expectation.
 
-| ID | Change | MAE | RMSE | tau_s | tau_t | Best epoch | Notes |
-|---|---|---:|---:|---:|---:|---:|---|
-| C0 | Existing point 20% control | 0.14626 | 0.20604 | 0.0053 | 0.9435 | 1 | committed checkpoint |
-| E1 | Channel missing 50% | pending | pending | pending | pending | pending | new evaluation mode |
-| E2 | E1 + training channel dropout | pending | pending | pending | pending | pending | robustness training |
-| E3 | E2 + `min_tau_s=0.25` | pending | pending | pending | pending | pending | forced spatial prior |
-| E4 | E3 + per-step clamp | pending | pending | pending | pending | pending | trajectory ablation |
-| E5 | Best candidate, 5 seeds | pending | pending | pending | pending | pending | final comparison |
+| ID | Change | PCC | NMSE | PSNR | SNR | MAE | RMSE | tau_s | tau_t | Best epoch | Notes |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| J0 | Joint reconstructed pair, GiFlow control | 0.7976 | 0.3674 | 40.52 | 4.35 | 4.324 | 10.648 | 0.0377 | 0.000165 | 21 | Euler 20; 4,000 windows/source |
+| J1 | Joint reconstructed pair, SRG-flow | 0.7996 | 0.5476 | 38.79 | 2.62 | 6.947 | 12.999 | 0.0398 | 0.000080 | 5 | Euler 5; not directly comparable to J0 |
+| C0 | Existing point 20% control | pending | pending | pending | pending | 0.14626 | 0.20604 | 0.0053 | 0.9435 | 1 | old checkpoint; new metrics pending |
+| E1 | Channel missing 50% | pending | pending | pending | pending | pending | pending | pending | pending | pending | new evaluation mode |
+| E2 | E1 + training channel dropout | pending | pending | pending | pending | pending | pending | pending | pending | pending | robustness training |
+| E3 | E2 + `min_tau_s=0.25` | pending | pending | pending | pending | pending | pending | pending | pending | pending | forced spatial prior |
+| E4 | E3 + per-step clamp | pending | pending | pending | pending | pending | pending | pending | pending | pending | trajectory ablation |
+| E5 | Best candidate, 5 seeds | pending | pending | pending | pending | pending | pending | pending | pending | pending | final comparison |
+
+J0/J1 both used seed 0, 50% channel masking, 0.5 training channel dropout,
+the same 4,000-window-per-source split, and RTX 4050. The two roots contain
+matched reconstruction variants of the same recordings, not independent
+cohorts. J0 used 20 Euler steps and J1 used 5; matched-step evaluation is needed
+before drawing a model-quality conclusion. Each test metric covers 2.48M hidden
+entries per source.
 
 ### GPU diagnostic (synthetic only)
 
@@ -120,15 +130,20 @@ the factors one at a time before drawing a conclusion.
 ## Interpretation rules
 
 - Compare against the same missing pattern; point missing and channel missing are
-  different tasks and must not share one leaderboard.
-- Report MAE/RMSE/MAPE, standard deviation across seeds, train/validation curves,
-  final `tau_s` and `tau_t`, and best epoch.
+   different tasks and must not share one leaderboard.
+- Report PCC/NMSE/PSNR/SNR, standard deviation across seeds, train/validation
+   curves, final `tau_s` and `tau_t`, and best epoch. Joint runs macro-average
+   dataset-level scores. Keep legacy MAE/RMSE/MAPE in the history JSON.
 - A lower MAE with `tau_s` near zero does not demonstrate useful spatial learning.
 - A higher MAE from forced smoothing is still informative: it tests whether the
-  current graph is useful for EEG or whether the graph construction needs work.
+   current graph is useful for EEG or whether the graph construction needs work.
 - The preservation loss changes gradients through shared network parameters; it
-  does not directly correct hidden-channel velocities. Per-step clamping changes
-  the trajectory itself and is a separate ablation.
+   does not directly correct hidden-channel velocities. Per-step clamping changes
+   the trajectory itself and is a separate ablation.
+
+The runner now reports PCC, NMSE, PSNR, and the paper's SNR, while retaining
+MAE/RMSE/MAPE for continuity. The committed C0 checkpoint predates those
+metrics; its PCC/NMSE/PSNR/SNR values remain pending reevaluation.
 
 ## Next updates
 

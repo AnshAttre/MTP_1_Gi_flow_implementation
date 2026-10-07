@@ -240,6 +240,18 @@ def test_masking_and_metrics():
           "mae=%.3f n=%d" % (mt["mae"], mt["n"]))
     check("MAPE is in percent", abs(mt["mape"] - 50.0) < 1e-6, "%.2f" % mt["mape"])
 
+    pred = np.array([[1.0, 2.0, 2.0, 4.0]])
+    tgt = np.array([[1.0, 2.0, 4.0, 4.0]])
+    msk = np.array([[0.0, 1.0, 1.0, 1.0]])
+    mt = imputation_metrics(pred, tgt, msk)
+    check("PCC uses the scored entries", abs(mt["pcc"] - 0.5) < 1e-9,
+          "%.6f" % mt["pcc"])
+    check("NMSE is normalized by target energy", abs(mt["nmse"] - 1.0 / 9.0) < 1e-9,
+          "%.6f" % mt["nmse"])
+    check("PSNR uses scored target range",
+          abs(mt["psnr"] - 20.0 * np.log10(2.0 / np.sqrt(4.0 / 3.0))) < 1e-9)
+    check("paper SNR agrees with NMSE", abs(mt["snr"] + 10.0 * np.log10(mt["nmse"])) < 1e-9)
+
 
 def test_splits_and_ema():
     print("\n[splits / EMA]")

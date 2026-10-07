@@ -195,10 +195,16 @@ class GraphInformedPrior(nn.Module):
         x_obs: torch.Tensor,
         mask: torch.Tensor,
         alpha_tau: float,
+        node_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Problem (5): signal alignment + Laplacian smoothness of the filtered signal."""
         x_prior = self.forward(x_obs, mask)
-        align = ((x_true - x_prior) ** 2).sum(dim=(1, 2))
+        if node_mask is not None:
+            node_weight = node_mask[:, :, None]
+            x_prior = x_prior * node_weight
+        else:
+            node_weight = 1.0
+        align = (((x_true - x_prior) ** 2) * node_weight).sum(dim=(1, 2))
         # tr(X_tau^T L_eta X_tau), summed over the temporal axis
         smooth = torch.einsum("bir,ij,bjr->b", x_prior, self.lap_s_dense, x_prior)
         return (align + alpha_tau * smooth).mean()
@@ -232,7 +238,9 @@ def optimize_filtering_factors(
             x_true = batch["x_true"].to(device)
             x_obs = batch["x_obs"].to(device)
             mask = batch["mask"].to(device)
-            loss = prior.objective(x_true, x_obs, mask, alpha_tau)
+            node_mask = batch.get("node_mask")
+            node_mask = None if node_mask is None else node_mask.to(device)
+            loss = prior.objective(x_true, x_obs, mask, alpha_tau, node_mask)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()

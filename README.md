@@ -117,6 +117,72 @@ flowchart LR
 GNN layers follow the papers GiFlow cites: `GraphConv` = Morris et al. (2019),
 `SGConv` = Wu et al. (2019).
 
+## SRGDiff-Inspired Flow Training
+
+SRGDiff is a diffusion model: it corrupts a VAE latent with Gaussian noise and
+trains a denoiser to predict that noise, with residual-direction and
+step-aware-modulation losses. GiFlow is not a diffusion model, so this project
+does **not** copy the 1000-step DDIM noise-prediction objective. The
+`srg_flow` variant adapts the two useful conditioning ideas to GiFlow's
+continuous flow-matching path:
+
+```text
+X_0 = graph-informed source from the visible signal
+X_t = (1 - t) X_0 + t X_1
+u   = X_1 - X_0                         # flow-matching target velocity
+v   = GiFlowVectorField(X_t, condition, t)
+r   = ResidualDirection(X_t, condition, t)
+v'  = gamma_t * (v + lambda_res * r) + beta_t
+```
+
+The residual module is trained toward the correction `u - stop_gradient(v)`.
+The step-aware module predicts `gamma_t` and `beta_t`; a penalty keeps them near
+the identity calibration `(1, 0)`. The total loss adds this residual regression
+and modulation penalty to the normal masked flow-velocity loss and observed
+value-preservation loss. At inference the same corrected velocity is integrated
+with GiFlow's Euler solver. The graph-informed source/prior and its filtering
+factor optimization remain GiFlow-specific; there is no VAE stage in this
+adaptation. It is SRGDiff-inspired, not a reproduction of SRGDiff.
+
+Use `--variant srg_flow`; `--srg-lambda-res` and `--srg-lambda-smm` default to
+the paper's 1.0 and 0.01 weighting values. The original `giflow` variant stays
+available as the control.
+
+## Metrics
+
+Evaluation scores artificially hidden entries only. The primary metrics are
+pooled PCC, `NMSE = sum((prediction - target)^2) / sum(target^2)`, and
+`PSNR = 20 log10(target_range / RMSE)`. PSNR uses the min-to-max range of the
+scored reference values. The paper reports SNR rather than PSNR, so the runner
+also reports `SNR = 10 log10(sum(target^2) / sum(error^2))`. MAE/RMSE/MAPE are
+retained for continuity with earlier runs. Validation checkpoints now minimize
+NMSE. In joint runs, each metric is computed per dataset and then macro-averaged
+so a longer recording does not dominate the aggregate. EEG-FID, frequency-domain/topomap errors, and downstream classification
+are not computed: those require an EEGNet feature model, electrode-coordinate
+interpolation, and task-specific labels/protocols that are not part of this
+imputation training pipeline.
+
+## Joint Datasets And Channel Alignment
+
+`--datasets` accepts multiple dataset names. Each dataset is split and
+standardized independently, then its windows are mixed in the same training
+loader. `--seed-roots` supplies one root per `seed4` entry. SEED-IV channels are
+aligned by canonical electrode names; absent channels are padded with zeros and
+marked unobserved. Graphs are remapped into that shared node space and averaged
+only over datasets containing each channel pair. Datasets without channel
+metadata receive dataset-scoped node names, so unrelated channel index 0 values
+are never silently treated as the same electrode. Joint training samples each
+dataset with equal probability. The graph prior automatically
+renormalizes its masked filtering when a source has padded channels, preventing
+those absent nodes from acting like observed zero-valued electrodes.
+
+MATLAB files with a 62-channel `cz_eeg1` array are supported directly, and
+window generation respects file boundaries. Other channel counts require
+explicit channel-name metadata; positional guessing is rejected. For different
+sampling rates or incompatible timestamp features, preprocess/resample first
+and use compatible timestamp fields before joint training. `--max-recordings`
+and `--max-windows` are available for bounded smoke runs.
+
 ## Layout
 
 ```
@@ -162,6 +228,7 @@ python scripts/run.py --dataset seed4 --missing channel --rho 0.5 \
 
 # ablations (Tables 4 and 5)
 python scripts/run.py --variant fm_gauss          # Gaussian prior
+python scripts/run.py --variant srg_flow          # SRGDiff-inspired residual-guided flow
 python scripts/run.py --variant gfm               # spatial-only prior
 python scripts/run.py --variant tfm               # temporal-only prior
 python scripts/run.py --variant no_spatial_attn
@@ -169,8 +236,15 @@ python scripts/run.py --variant no_temporal_attn
 python scripts/run.py --variant no_st_attn
 python scripts/run.py --variant no_propagation
 
+# joint EEG training with canonical channel alignment
+python scripts/run.py --datasets seed4 seed4 \
+  --seed-roots data/seed4/eeg_raw_reconstructed_l2/1 data/seed4/eeg_raw_reconstructed_l2/2 \
+  --max-recordings 100 --window 100 --stride 100 --missing channel --rho 0.5 \
+  --variant srg_flow --device cuda --out runs/seed4_joint_srg
+
 # correctness tests, and a timing benchmark for your machine
 python tests/test_giflow.py
+python tests/test_multidataset.py
 python scripts/benchmark.py --threads 12
 ```
 
@@ -253,8 +327,8 @@ hyperparameter tuning**, early-stopped at epoch 24 (best epoch 16):
 | GiFlow (paper, Table 1) | 0.23 | 0.30 | 6.65% |
 
 So **linear interpolation currently beats this implementation**, and the paper's number
-is ~4.7x better than what this reproduces. Cause below. Not yet run: any real dataset,
-multiple seeds, the hyperparameter search, or the ablations.
+is ~4.7x better than what this reproduces. Cause below. A bounded joint EEG run is now
+recorded below; multiple seeds, the hyperparameter search, and ablations remain pending.
 
 What *does* check out:
 
@@ -290,6 +364,27 @@ lower `--lr`, raise `--dropout` / `--weight-decay`, shrink `--hidden` / `--layer
 run the Appendix C.3 search. Also note point missing is linear interpolation's best case;
 the paper's own Table 3 shows Linear degrading from 11.02 to 33.03 MAE on Air-36 when the
 pattern switches to block missing, so `--missing block` is the fairer comparison.
+
+### Joint Reconstructed EEG Pair, RTX 4050
+
+`eeg_raw_reconstructed` and `eeg_raw_reconstructed_l2` each contain 2,142 matched
+62-channel trials. These are reconstruction variants of the same recordings, not
+independent cohorts. The run used seed 0, 4,000 uniformly thinned windows per source,
+50% whole-channel masking, and 0.5 training channel dropout; each source contributed
+2,800 train, 400 validation, and 800 test windows. The reported test scores cover
+4.96 million hidden values total.
+
+| Model | Euler steps | Best epoch | PCC | NMSE | PSNR (dB) | SNR (dB) | MAE | RMSE |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| GiFlow control | 20 | 21 | 0.7976 | 0.3674 | 40.52 | 4.35 | 4.324 | 10.648 |
+| SRG-flow | 5 | 5 | 0.7996 | 0.5476 | 38.79 | 2.62 | 6.947 | 12.999 |
+
+The control used 20 Euler steps and SRG-flow used 5 to reduce evaluation time, so this
+is not a controlled architectural comparison. PCC is nearly unchanged; NMSE, SNR, MAE,
+and RMSE are worse in the measured SRG-flow run. Its learned factors also nearly turn
+off temporal smoothing (`tau_t=0.000080`). Re-evaluate both checkpoints with matched
+Euler settings and investigate the prior before claiming an improvement. PSNR is
+computed using the peak-to-peak range of scored targets and is sensitive to outliers.
 
 ## Known problem: the filtering factors degenerate
 

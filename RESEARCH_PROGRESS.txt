@@ -9,7 +9,7 @@ reconstruct them from the remaining channels plus temporal context.
 
 Current model pipeline
 ----------------------
-1. Load SEED-IV X_prc1.npy recordings: (windows, channels, samples).
+1. Load SEED-IV X_prc1.npy recordings or 62-channel cz_eeg1 MATLAB recordings.
 2. Represent electrodes as graph nodes and samples as time positions.
 3. Build an electrode graph from training-only channel correlations.
 4. Window the signal, normally 62 x 100 per example.
@@ -37,8 +37,8 @@ Current model pipeline
 
    X <- X + (1/n_steps) v_theta(X, X_obs, M, t)
 
-12. Restore observed values and score only artificially hidden values using MAE,
-    RMSE, and MAPE.
+12. Restore observed values and score only artificially hidden values using
+   PCC, NMSE, PSNR, and the paper's SNR. MAE/RMSE/MAPE remain as legacy metrics.
 
 Improvements implemented
 ------------------------
@@ -88,23 +88,58 @@ useful to the filtering objective.
 
 Validation status
 -----------------
-44 repository checks pass, including checks for channel masking, minimum spatial
-smoothing, and per-step clamping. A combined one-epoch synthetic smoke run using
-all new controls completed successfully.
+51 checks pass across the core and joint-dataset test scripts, including channel
+masking, metrics, channel-union alignment, segment boundaries, and SRG-flow.
 
 The local machine has:
    NVIDIA GeForce RTX 4050 Laptop GPU
    torch 2.14.0+cu130
    CUDA available: True
 
-Actual SEED-IV retraining is pending because data/ contains no packed .npz or raw
-SEED-IV files. No SEED-IV quality result should be reported until the dataset is
-provided.
+The joint run used `eeg_raw_reconstructed` and `eeg_raw_reconstructed_l2`.
+Each contains 2,142 matched MATLAB trials in folder `1` (62 channels x 1,000
+samples per trial); corresponding files have identical names and aligned channel
+order. These are two reconstruction variants of the same trials, not independent
+subject cohorts. Reconstructed folders `2` and `3` remain empty. The sources are
+not verified as the paper's official SEED-IV preprocessing.
+
+SRGDiff-inspired flow variant
+-----------------------------
+The paper's SRGDiff is a latent diffusion model, not a flow-matching model. The
+`srg_flow` variant keeps GiFlow's continuous path and velocity target. A
+Residual Direction Module learns the correction from the current GiFlow
+velocity to the flow target; a Step-Aware Modulation Module applies a learned
+near-identity scale/bias to the corrected velocity. Training adds residual
+regression and scale/bias regularization to the original flow and preservation
+losses. Sampling uses that same guided velocity in Euler integration; it does
+not use DDIM noise prediction or a VAE. This is an adaptation, not a reproduction
+of SRGDiff.
+
+Joint-dataset training
+----------------------
+`--datasets` mixes dataset-specific windows in one training loader. Each source
+gets a separate temporal split and scaler. Channels with canonical names are
+aligned into a union node space; absent nodes are masked, and graph edges are
+averaged only when both endpoints occur in a source dataset. The SEED-IV loader
+supports `cz_eeg1` MATLAB files and respects file boundaries. Channel counts
+without labels are rejected rather than aligned by array position. Datasets at
+different sample rates must be resampled before joint training.
+
+Metric convention
+-----------------
+PCC is pooled over hidden entries within each dataset. Joint runs macro-average
+dataset-level metrics, and the training sampler balances dataset probability.
+NMSE is squared error energy divided by target energy. PSNR uses the
+peak-to-peak range of scored targets. SNR is also
+reported to match SRGDiff's paper metric; MAE/RMSE/MAPE are retained for old
+result comparisons. Existing checkpoints have not yet been reevaluated with
+PCC/NMSE/PSNR/SNR, so those values remain pending.
 
 Experiment tracking protocol
-----------------------------
-Run one controlled change at a time and record command, output directory, MAE,
-RMSE, MAPE, tau_s, tau_t, best epoch, and a short conclusion.
+-----------------------------
+Run one controlled change at a time and record command, output directory, PCC,
+NMSE, PSNR, SNR, tau_s, tau_t, best epoch, and a short conclusion. Keep legacy
+MAE/RMSE/MAPE in the history JSON for comparison.
 
 Recommended order:
    C0  Existing point-missing control.
@@ -125,7 +160,29 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
 Results log
 -----------
 C0: committed point-missing checkpoint above.
-E1-E5: pending until actual SEED-IV data is available.
+
+Joint reconstructed-pair GPU run, seed 0, 4,000 windows per source (uniformly
+thinned from 21,420 recording-contained windows), 2,800/400/800 train/validation/
+test windows per source, 50% channel masking, training channel dropout 0.5,
+RTX 4050:
+
+   Model      Euler  Best epoch  PCC     NMSE    PSNR dB  SNR dB  MAE    RMSE   tau_s  tau_t
+   GiFlow       20      21       0.7976  0.3674  40.52    4.35    4.324  10.648  0.0377 0.000165
+   SRG-flow      5       5       0.7996  0.5476  38.79    2.62    6.947  12.999  0.0398 0.000080
+
+Each test score covers 4,960,000 hidden entries (2,480,000 per source). The
+modified run used 5 Euler steps to reduce GPU evaluation time; the control used
+20. Therefore these are not a controlled model comparison. PCC is essentially
+unchanged, while NMSE/SNR/MAE are worse for the SRG-flow run as measured. Re-run
+both checkpoints at matched Euler settings before attributing the gap to the
+architecture. PSNR uses the scored-target peak-to-peak range and is sensitive to
+outliers; compare it only under the same evaluation set and formula.
+
+Outputs:
+   runs/seed4_reconstructed_pair_joint_srg_gpu
+   runs/seed4_reconstructed_pair_joint_srg_flow_gpu
+
+E1-E5: pending additional controlled experiments and multi-seed evaluation.
 
 GPU diagnostic run (synthetic, not SEED-IV)
 -------------------------------------------

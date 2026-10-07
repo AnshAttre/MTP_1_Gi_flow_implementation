@@ -64,7 +64,8 @@ class GiFlowVectorField(nn.Module):
 
         if use_propagation:
             self.prop = SpatioTemporalPropagation(
-                hidden, adj_s_norm, adj_t_norm, n_mp_layers, k_hops, dropout
+                hidden, adj_s_norm, adj_t_norm, n_mp_layers, k_hops, dropout,
+                adj_s=adj_s,
             )
 
         self.out_mlp = nn.Sequential(
@@ -78,6 +79,7 @@ class GiFlowVectorField(nn.Module):
         mask: torch.Tensor,
         t: torch.Tensor,
         timestamps: torch.Tensor | None = None,
+        node_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """x_t, x_cond, mask: (B, N, R); t: (B,). Returns the vector field (B, N, R)."""
         b, n, r = x_t.shape
@@ -85,12 +87,15 @@ class GiFlowVectorField(nn.Module):
 
         parts = [feat]
         if self.use_spatial_attention:
-            parts.append(self.spatial_attn(feat))
+            parts.append(self.spatial_attn(feat, node_mask))
         if self.use_temporal_attention:
             parts.append(self.temporal_attn(feat, timestamps))
         parts.append(self.step_emb(t).view(b, 1, 1, self.hidden).expand(b, n, r, self.hidden))
 
         h = self.fuse(torch.cat(parts, dim=-1))
         if self.use_propagation:
-            h = self.prop(h)
-        return self.out_mlp(h).squeeze(-1)
+            h = self.prop(h, node_mask)
+        velocity = self.out_mlp(h).squeeze(-1)
+        if node_mask is not None:
+            velocity = velocity * node_mask[:, :, None]
+        return velocity

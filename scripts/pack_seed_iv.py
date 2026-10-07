@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from giflow.data.seed_iv import _correlation_adjacency, _discover
+from giflow.data.seed_iv import SEED_IV_CHANNELS, _correlation_adjacency, _discover
 
 
 def main(argv=None):
@@ -53,7 +53,7 @@ def main(argv=None):
                          % sorted({f[1] for f in _discover(root)}))
 
     print("packing %d recording(s) at %s" % (len(found), args.dtype))
-    chunks, labels, meta = [], [], []
+    chunks, labels, meta, recording_lengths = [], [], [], []
     for session, subject, path in found:
         arr = np.load(path, mmap_mode="r")
         n = arr.shape[0] if args.max_windows_per_subject is None else min(
@@ -61,6 +61,7 @@ def main(argv=None):
         )
         a = np.asarray(arr[:n], dtype=args.dtype)
         chunks.append(a.transpose(1, 0, 2).reshape(a.shape[1], -1))
+        recording_lengths.append(chunks[-1].shape[1])
         lp = path.parent / "labels.npy"
         if lp.exists():
             labels.append(np.load(lp)[:n])
@@ -88,6 +89,8 @@ def main(argv=None):
         x=x,
         adj=adj.astype(np.float32),
         recordings=np.array(meta),
+        channel_names=np.array(SEED_IV_CHANNELS),
+        recording_lengths=np.asarray(recording_lengths, dtype=np.int64),
     )
     if labels:
         payload["labels"] = np.concatenate(labels)

@@ -69,12 +69,22 @@ def _discover(root: Path):
     return found
 
 
+def _channel_names(n_channels: int):
+    if n_channels != len(SEED_IV_CHANNELS):
+        raise ValueError(
+            "SEED-IV recording has %d channels but no channel-name metadata; "
+            "cannot safely align it to another dataset" % n_channels
+        )
+    return tuple(SEED_IV_CHANNELS)
+
+
 def load_seed_iv(
     root: str | Path = "data/seed4",
     window: int = 100,
     subjects: tuple[str, ...] | None = None,
     sessions: tuple[str, ...] | None = None,
     max_windows_per_subject: int | None = None,
+    max_recordings: int | None = None,
     threshold: float = 0.1,
     montage_positions: np.ndarray | None = None,
     channel_dropout: bool = False,
@@ -101,7 +111,17 @@ def load_seed_iv(
         name = "SEED-IV(packed:%s)" % root.stem
         if adj is None:
             adj = _correlation_adjacency(x, threshold)
-        return DatasetBundle(name, x, mask, adj)
+        channel_names = (
+            tuple(v.decode() if isinstance(v, bytes) else str(v)
+                  for v in z["channel_names"].tolist())
+            if "channel_names" in z else _channel_names(x.shape[0])
+        )
+        segments = None
+        if "recording_lengths" in z:
+            lengths = z["recording_lengths"].astype(int).tolist()
+            boundaries = np.cumsum([0] + lengths)
+            segments = tuple(zip(boundaries[:-1], boundaries[1:]))
+        return DatasetBundle(name, x, mask, adj, channel_names=channel_names, segments=segments)
 
     if not root.exists():
         raise FileNotFoundError(
@@ -111,7 +131,40 @@ def load_seed_iv(
 
     found = _discover(root)
     if not found:
-        raise FileNotFoundError("no X_prc1.npy found under %s" % root)
+        mat_paths = sorted(root.rglob("*.mat"))
+        if not mat_paths:
+            raise FileNotFoundError("no X_prc1.npy or .mat recordings found under %s" % root)
+        if max_recordings is not None:
+            mat_paths = mat_paths[:max_recordings]
+        from scipy.io import loadmat
+
+        chunks, segments, cursor = [], [], 0
+        for path in mat_paths:
+            values = loadmat(path).get("cz_eeg1")
+            if values is None or values.ndim != 2:
+                raise ValueError("%s must contain a 2-D cz_eeg1 array" % path)
+            if values.shape[1] == len(SEED_IV_CHANNELS):
+                values = values.T
+            elif values.shape[0] != len(SEED_IV_CHANNELS):
+                raise ValueError("cannot identify 62-channel axis in %s: %s" % (path, values.shape))
+            values = np.asarray(values, dtype=np.float64)
+            chunks.append(values)
+            segments.append((cursor, cursor + values.shape[1]))
+            cursor += values.shape[1]
+        x = np.concatenate(chunks, axis=1)
+        adj = _correlation_adjacency(x[:, : int(0.7 * x.shape[1])], threshold)
+        mask = np.ones_like(x)
+        if channel_dropout:
+            rng = np.random.default_rng(0)
+            dead = rng.choice(x.shape[0], size=max(1, x.shape[0] // 20), replace=False)
+            mask[dead] = 0.0
+        if verbose:
+            print("[seed-iv] loaded %d MATLAB recordings (%d channels, %d samples)"
+                  % (len(chunks), x.shape[0], x.shape[1]))
+        return DatasetBundle(
+            "SEED-IV-MAT", x, mask, adj, channel_names=_channel_names(x.shape[0]),
+            segments=segments,
+        )
     if sessions:
         found = [f for f in found if f[0] in sessions]
     if subjects:
@@ -121,6 +174,8 @@ def load_seed_iv(
 
     chunks = []
     used = []
+    segments = []
+    cursor = 0
     for session, subject, path in found:
         arr = np.load(path, mmap_mode="r")
         n = arr.shape[0] if max_windows_per_subject is None else min(
@@ -128,7 +183,10 @@ def load_seed_iv(
         )
         a = np.asarray(arr[:n], dtype=np.float64)     # (n, 62, 1000)
         # (n, C, T) -> (C, n*T): lay the windows end to end along time
-        chunks.append(a.transpose(1, 0, 2).reshape(a.shape[1], -1))
+        chunk = a.transpose(1, 0, 2).reshape(a.shape[1], -1)
+        chunks.append(chunk)
+        segments.append((cursor, cursor + chunk.shape[1]))
+        cursor += chunk.shape[1]
         used.append("%s/%s[%d]" % (session, subject, n))
     x = np.concatenate(chunks, axis=1)
 
@@ -155,4 +213,6 @@ def load_seed_iv(
         print("[seed-iv] signal (%d channels, %d samples), avg degree %.2f"
               % (x.shape[0], x.shape[1], adj.sum(1).mean()))
 
-    return DatasetBundle("SEED-IV", x, mask, adj)
+    return DatasetBundle(
+        "SEED-IV", x, mask, adj, channel_names=_channel_names(x.shape[0]), segments=segments
+    )

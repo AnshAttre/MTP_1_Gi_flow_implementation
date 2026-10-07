@@ -27,8 +27,17 @@ class GraphConv(nn.Module):
         self.lin_neigh = nn.Linear(in_dim, out_dim, bias=False)
         self.register_buffer("adj", torch.as_tensor(np.asarray(adj), dtype=torch.float32))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, node_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         """x: (..., N, F) -> (..., N, out_dim)."""
+        if node_mask is not None:
+            batch = node_mask.shape[0]
+            x = x.unsqueeze(0).expand(batch, -1, -1)
+            adjacency = self.adj.unsqueeze(0)
+            adjacency = adjacency * node_mask[:, :, None] * node_mask[:, None, :]
+            neigh = torch.einsum("bij,bjf->bif", adjacency, x)
+            return self.lin_self(x) + self.lin_neigh(neigh)
         neigh = torch.einsum("ij,...jf->...if", self.adj, x)
         return self.lin_self(x) + self.lin_neigh(neigh)
 
@@ -36,16 +45,43 @@ class GraphConv(nn.Module):
 class SGConv(nn.Module):
     """Wu et al. (2019) simplified graph convolution: S^K X W, precomputed S^K."""
 
-    def __init__(self, in_dim: int, out_dim: int, adj_norm: np.ndarray, k: int = 2):
+    def __init__(
+        self, in_dim: int, out_dim: int, adj_norm: np.ndarray, k: int = 2,
+        raw_adjacency: np.ndarray | None = None,
+    ):
         super().__init__()
         s = np.asarray(adj_norm, dtype=np.float64)
+        self.k = k
         sk = np.linalg.matrix_power(s, k) if k > 1 else s
+        self.register_buffer("adj_norm", torch.as_tensor(s, dtype=torch.float32), persistent=False)
         self.register_buffer("prop", torch.as_tensor(sk, dtype=torch.float32))
+        raw = None if raw_adjacency is None else np.asarray(raw_adjacency, dtype=np.float32)
+        self.register_buffer(
+            "raw_adjacency", None if raw is None else torch.as_tensor(raw), persistent=False
+        )
         self.lin = nn.Linear(in_dim, out_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, node_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         """x: (..., N, F) -> (..., N, out_dim)."""
-        return self.lin(torch.einsum("ij,...jf->...if", self.prop, x))
+        if node_mask is None:
+            return self.lin(torch.einsum("ij,...jf->...if", self.prop, x))
+        batch, nodes, features = x.shape[0], x.shape[-2], x.shape[-1]
+        flat = x.reshape(batch, -1, nodes, features)
+        presence = node_mask.to(device=x.device, dtype=x.dtype)
+        if self.raw_adjacency is None:
+            adjacency = self.adj_norm.to(dtype=x.dtype).unsqueeze(0)
+        else:
+            eye = torch.eye(nodes, device=x.device, dtype=x.dtype)
+            adjacency = (self.raw_adjacency.to(dtype=x.dtype) + eye).unsqueeze(0)
+        adjacency = adjacency * presence[:, :, None] * presence[:, None, :]
+        degree = adjacency.sum(dim=-1).clamp_min(1e-8)
+        inv_sqrt = degree.rsqrt()
+        normalized = adjacency * inv_sqrt[:, :, None] * inv_sqrt[:, None, :]
+        prop = torch.linalg.matrix_power(normalized, self.k)
+        propagated = torch.einsum("bij,brjf->brif", prop, flat).reshape_as(x)
+        return self.lin(propagated)
 
 
 class SpatialAttention(nn.Module):
@@ -65,15 +101,27 @@ class SpatialAttention(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.scale = 1.0 / math.sqrt(hidden)
 
-    def forward(self, feat: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, feat: torch.Tensor, node_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         """feat: (B, N, R, H) -> (B, N, R, H)."""
-        x_n = self.emb_gnn(self.node_emb)              # (N, H)
+        x_n = self.emb_gnn(self.node_emb, node_mask)   # (N, H) or (B, N, H)
         q = self.w_q(x_n)
         k = self.w_k(x_n)
-        attn = torch.softmax(q @ k.T * self.scale, dim=-1)   # (N, N)
-        attn = self.drop(attn)
+        scores = (
+            q @ k.T if node_mask is None
+            else torch.einsum("bnh,bmh->bnm", q, k)
+        ) * self.scale
         v = self.w_v(self.value_mlp(feat))             # (B, N, R, H)
-        agg = torch.einsum("mn,bnrh->bmrh", attn, v)
+        if node_mask is None:
+            attn = self.drop(torch.softmax(scores, dim=-1))
+            agg = torch.einsum("mn,bnrh->bmrh", attn, v)
+        else:
+            scores = scores.masked_fill(
+                node_mask[:, None, :] <= 0, torch.finfo(scores.dtype).min
+            )
+            attn = self.drop(torch.softmax(scores, dim=-1))
+            agg = torch.einsum("bmn,bnrh->bmrh", attn, v)
         return self.out_mlp(agg)
 
 
@@ -138,10 +186,12 @@ class SpatioTemporalPropagation(nn.Module):
         n_layers: int = 4,
         k_hops: int = 2,
         dropout: float = 0.0,
+        adj_s: np.ndarray | None = None,
     ):
         super().__init__()
         self.spatial = nn.ModuleList(
-            [SGConv(hidden, hidden, adj_s_norm, k=k_hops) for _ in range(n_layers)]
+            [SGConv(hidden, hidden, adj_s_norm, k=k_hops, raw_adjacency=adj_s)
+             for _ in range(n_layers)]
         )
         self.temporal = nn.ModuleList(
             [SGConv(hidden, hidden, adj_t_norm, k=k_hops) for _ in range(n_layers)]
@@ -150,15 +200,19 @@ class SpatioTemporalPropagation(nn.Module):
         self.norms = nn.ModuleList([nn.LayerNorm(hidden) for _ in range(n_layers)])
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, h: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, h: torch.Tensor, node_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         """h: (B, N, R, H) -> (B, N, R, H)."""
         for gs, gt, mix, norm in zip(self.spatial, self.temporal, self.mix, self.norms):
             # spatial: propagate over N, independently for each timestep
-            hs = gs(h.permute(0, 2, 1, 3)).permute(0, 2, 1, 3)
+            hs = gs(h.permute(0, 2, 1, 3), node_mask).permute(0, 2, 1, 3)
             # temporal: propagate over R, independently for each node
             ht = gt(h)
             upd = mix(torch.cat([hs, ht], dim=-1))
             h = norm(h + self.drop(F.relu(upd)))
+            if node_mask is not None:
+                h = h * node_mask[:, :, None, None]
         return h
 
 

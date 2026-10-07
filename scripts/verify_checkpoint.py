@@ -34,15 +34,20 @@ def main(argv=None):
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--device", default="cpu")
     p.add_argument("--tol", type=float, default=0.02,
-                   help="relative tolerance when comparing to the recorded MAE")
+                   help="relative tolerance for the recorded NMSE (or legacy MAE)")
     args = p.parse_args(argv)
 
     d = Path(args.ckpt_dir)
     hist = json.loads((d / "history.json").read_text())
     cfg = hist["config"]
     recorded = hist["test"]
-    print("recorded test: MAE %.5f  RMSE %.5f  MAPE %.2f%%  (n=%d)"
-          % (recorded["mae"], recorded["rmse"], recorded["mape"], recorded["n"]))
+    primary_metric = "nmse" if "nmse" in recorded else "mae"
+    print("recorded test: PCC %s  NMSE %s  PSNR %s dB  SNR %s dB | MAE %.5f RMSE %.5f MAPE %.2f%% (n=%d)"
+          % ("%.4f" % recorded["pcc"] if "pcc" in recorded else "n/a",
+             "%.5f" % recorded["nmse"] if "nmse" in recorded else "n/a",
+             "%.2f" % recorded["psnr"] if "psnr" in recorded else "n/a",
+             "%.2f" % recorded["snr"] if "snr" in recorded else "n/a",
+             recorded["mae"], recorded["rmse"], recorded["mape"], recorded["n"]))
     print("run config: hidden=%d layers=%d dropout=%s euler=%d seed=%d"
           % (cfg["hidden"], cfg["n_mp_layers"], cfg["dropout"],
              cfg["euler_steps"], cfg["seed"]))
@@ -111,14 +116,18 @@ def main(argv=None):
             acc.update(scaler.inverse_transform(pred),
                        scaler.inverse_transform(x), ev)
     got = acc.compute()
-    print("\nre-evaluated : MAE %.5f  RMSE %.5f  MAPE %.2f%%  (n=%d)"
-          % (got["mae"], got["rmse"], got["mape"], got["n"]))
+    print("\nre-evaluated : PCC %.4f  NMSE %.5f  PSNR %.2f dB  SNR %.2f dB | MAE %.5f RMSE %.5f MAPE %.2f%% (n=%d)"
+          % (got["pcc"], got["nmse"], got["psnr"], got["snr"],
+             got["mae"], got["rmse"], got["mape"], got["n"]))
 
-    rel = abs(got["mae"] - recorded["mae"]) / max(recorded["mae"], 1e-12)
+    rel = abs(got[primary_metric] - recorded[primary_metric]) / max(
+        abs(recorded[primary_metric]), 1e-12
+    )
     same_n = got["n"] == recorded["n"]
     ok = rel <= args.tol and same_n
-    print("delta MAE %.5f (%.2f%% relative) | n matches: %s" % (
-        got["mae"] - recorded["mae"], 100 * rel, same_n))
+    print("delta %s %.5f (%.2f%% relative) | n matches: %s" % (
+        primary_metric.upper(), got[primary_metric] - recorded[primary_metric],
+        100 * rel, same_n))
     print("\n%s" % ("VERIFIED" if ok else "MISMATCH -- investigate"))
     return 0 if ok else 1
 

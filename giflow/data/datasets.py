@@ -26,16 +26,40 @@ from .synthetic import generate_synthetic
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
+def _canonical_channel_name(name):
+    name = str(name).strip().upper()
+    return {"T3": "T7", "T4": "T8", "T5": "P7", "T6": "P8"}.get(name, name)
+
+
 class DatasetBundle:
     """Container for the signal, masks, graphs and metadata of one dataset."""
 
-    def __init__(self, name, x, observed_mask, adj_s, timestamps=None, ts_classes=()):
+    def __init__(
+        self, name, x, observed_mask, adj_s, timestamps=None, ts_classes=(),
+        channel_names=None, segments=None, node_presence=None,
+    ):
         self.name = name
         self.x = np.asarray(x, dtype=np.float64)          # (N, R_total)
         self.observed_mask = np.asarray(observed_mask, dtype=np.float64)
         self.adj_s = np.asarray(adj_s, dtype=np.float64)  # (N, N)
         self.timestamps = timestamps                      # (R_total, n_fields) int codes
         self.ts_classes = tuple(ts_classes)
+        raw_names = (
+            ("%s:node%d" % (name, i) for i in range(self.x.shape[0]))
+            if channel_names is None else channel_names
+        )
+        self.channel_names = tuple(_canonical_channel_name(v) for v in raw_names)
+        self.segments = None if segments is None else tuple(segments)
+        self.node_presence = np.asarray(
+            np.ones(self.x.shape[0]) if node_presence is None else node_presence,
+            dtype=np.float64,
+        )
+        if len(self.channel_names) != self.x.shape[0]:
+            raise ValueError("channel_names must contain one name per node")
+        if self.node_presence.shape != (self.x.shape[0],):
+            raise ValueError("node_presence must contain one value per node")
+        if len(set(self.channel_names)) != len(self.channel_names):
+            raise ValueError("channel_names must be unique within a dataset")
 
     def graphs(self, window: int, normalized_laplacian: bool = False):
         """Spatial/temporal Laplacians and GCN-normalised adjacencies."""
@@ -60,6 +84,41 @@ class DatasetBundle:
                 deg.mean(),
             )
         )
+
+
+def align_bundles(bundles: list[DatasetBundle]):
+    """Pad bundles into a shared node space without equating unnamed nodes."""
+    if not bundles:
+        raise ValueError("at least one dataset bundle is required")
+    channel_names = tuple(dict.fromkeys(
+        channel for bundle in bundles for channel in bundle.channel_names
+    ))
+    channel_index = {name: i for i, name in enumerate(channel_names)}
+    aligned = []
+    edge_sum = np.zeros((len(channel_names), len(channel_names)), dtype=np.float64)
+    edge_count = np.zeros_like(edge_sum)
+
+    for bundle in bundles:
+        indices = np.asarray([channel_index[name] for name in bundle.channel_names])
+        x = np.zeros((len(channel_names), bundle.x.shape[1]), dtype=np.float64)
+        mask = np.zeros_like(x)
+        x[indices] = bundle.x
+        mask[indices] = bundle.observed_mask
+        adj = np.zeros((len(channel_names), len(channel_names)), dtype=np.float64)
+        adj[np.ix_(indices, indices)] = bundle.adj_s
+        present = np.zeros(len(channel_names), dtype=np.float64)
+        present[indices] = 1.0
+        edge_sum += adj
+        edge_count += np.outer(present, present)
+        aligned.append(DatasetBundle(
+            bundle.name, x, mask, adj, bundle.timestamps, bundle.ts_classes,
+            channel_names=channel_names, segments=bundle.segments,
+            node_presence=present,
+        ))
+
+    combined_adj = np.divide(edge_sum, edge_count, out=np.zeros_like(edge_sum), where=edge_count > 0)
+    np.fill_diagonal(combined_adj, 0.0)
+    return aligned, combined_adj, channel_names
 
 
 def _first_existing(names, root: Path):

@@ -60,6 +60,9 @@ class TrainConfig:
     use_spatial_attention: bool = True
     use_temporal_attention: bool = True
     use_propagation: bool = True
+    use_srg_guidance: bool = False
+    srg_lambda_res: float = 1.0
+    srg_lambda_smm: float = 0.01
     # training-time extra masking so the model predicts instead of copying
     train_keep_range: tuple = (0.3, 0.9)
     train_channel_drop_prob: float = 0.0
@@ -93,19 +96,45 @@ def _timestamps(batch, device):
 
 
 @torch.no_grad()
-def evaluate(model, loader, scaler, cfg: TrainConfig, device: str) -> dict:
+def evaluate(model, loader, scaler, cfg: TrainConfig, device: str, dataset_names=None) -> dict:
     """Impute the loader's windows and score on the eval mask, in original units."""
     model.eval()
-    acc = MetricAccumulator()
+    joint = isinstance(scaler, (list, tuple))
+    accumulators = [MetricAccumulator() for _ in scaler] if joint else [MetricAccumulator()]
     for batch in loader:
         x_true = batch["x_true"].to(device)
         cond = batch["cond_mask"].to(device)
         ev = batch["eval_mask"].to(device)
+        node_mask = batch["node_mask"].to(device)
         pred = model.impute(
-            x_true, cond, n_steps=cfg.euler_steps, timestamps=_timestamps(batch, device)
+            x_true, cond, n_steps=cfg.euler_steps,
+            timestamps=_timestamps(batch, device), node_mask=node_mask,
         )
-        acc.update(scaler.inverse_transform(pred), scaler.inverse_transform(x_true), ev)
-    return acc.compute()
+        if not joint:
+            accumulators[0].update(
+                scaler.inverse_transform(pred), scaler.inverse_transform(x_true), ev
+            )
+            continue
+        ids = batch["dataset_id"].to(device)
+        for dataset_id in torch.unique(ids).tolist():
+            selected = ids == dataset_id
+            dataset_scaler = scaler[dataset_id]
+            accumulators[dataset_id].update(
+                dataset_scaler.inverse_transform(pred[selected]),
+                dataset_scaler.inverse_transform(x_true[selected]),
+                ev[selected],
+            )
+    results = [acc.compute() for acc in accumulators]
+    if not joint:
+        return results[0]
+    keys = ("pcc", "nmse", "psnr", "snr", "mae", "rmse", "mape")
+    aggregate = {
+        key: float(np.nanmean([result[key] for result in results])) for key in keys
+    }
+    aggregate["n"] = sum(result["n"] for result in results)
+    names = dataset_names or [str(i) for i in range(len(results))]
+    aggregate["per_dataset"] = dict(zip(names, results))
+    return aggregate
 
 
 def fit(
@@ -119,6 +148,7 @@ def fit(
     scaler,
     cfg: TrainConfig,
     n_timestamp_classes: tuple = (),
+    dataset_names: tuple = (),
     verbose: bool = True,
 ):
     """Run the full pipeline: tau optimisation, then flow-matching training."""
@@ -155,15 +185,23 @@ def fit(
         max_tau=cfg.max_tau,
         min_tau_s=cfg.min_tau_s,
         gaussian_prior=cfg.gaussian_prior,
-        max_len=max(512, train_ds.window),
+        max_len=max(
+            512, train_ds.window if hasattr(train_ds, "window") else train_ds.datasets[0].window
+        ),
         n_timestamp_classes=n_timestamp_classes,
         use_spatial_attention=cfg.use_spatial_attention,
         use_temporal_attention=cfg.use_temporal_attention,
         use_propagation=cfg.use_propagation,
         clamp_observed_each_step=cfg.clamp_observed_each_step,
+        use_srg_guidance=cfg.use_srg_guidance,
+        srg_lambda_res=cfg.srg_lambda_res,
+        srg_lambda_smm=cfg.srg_lambda_smm,
     ).to(device)
 
-    history = {"tau": None, "epochs": [], "config": asdict(cfg)}
+    history = {
+        "tau": None, "epochs": [], "config": asdict(cfg),
+        "dataset_names": list(dataset_names),
+    }
 
     # ---------------------------------------------------------- Stage 1: tau
     if not cfg.gaussian_prior:
@@ -199,7 +237,8 @@ def fit(
         for batch in val_loader:
             xt = batch["x_true"].to(device)
             cm = batch["cond_mask"].to(device)
-            x0 = model.source_sample(xt * cm, cm)
+            node_mask = batch["node_mask"].to(device)
+            x0 = model.source_sample(xt * cm, cm, node_mask)
             tc += float(model.prior.transport_cost(xt, x0).detach())
             ntc += 1
         history["transport_cost"] = tc / max(ntc, 1)
@@ -212,7 +251,7 @@ def fit(
     opt = torch.optim.Adam(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
     ema = EMA(model, cfg.ema_decay)
 
-    best = {"mae": float("inf"), "epoch": -1}
+    best = {"nmse": float("inf"), "epoch": -1}
     bad = 0
     gen = torch.Generator(device=device).manual_seed(cfg.seed)
     ckpt = out_dir / "best.pt"
@@ -220,12 +259,13 @@ def fit(
 
     for epoch in range(cfg.max_epochs):
         model.train()
-        tot, flow_tot, preservation_tot, nb = 0.0, 0.0, 0.0, 0
+        tot, flow_tot, preservation_tot, residual_tot, smm_tot, nb = 0.0, 0.0, 0.0, 0.0, 0.0, 0
         te0 = time.time()
         for batch in train_loader:
             x_true = batch["x_true"].to(device)
             obs = batch["observed_mask"].to(device)
             cond_full = batch["cond_mask"].to(device)
+            node_mask = batch["node_mask"].to(device)
             # hide a random subset of the visible entries; score on what we hid
             cond = random_subset_mask(
                 cond_full,
@@ -243,6 +283,7 @@ def fit(
                 _timestamps(batch, device),
                 preservation_weight=cfg.preservation_weight,
                 return_components=True,
+                node_mask=node_mask,
             )
             opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -253,6 +294,8 @@ def fit(
             tot += float(loss.detach())
             flow_tot += float(components["flow_loss"].detach())
             preservation_tot += float(components["preservation_loss"].detach())
+            residual_tot += float(components["residual_loss"].detach())
+            smm_tot += float(components["smm_regularization"].detach())
             nb += 1
         train_loss = tot / max(nb, 1)
         flow_loss = flow_tot / max(nb, 1)
@@ -264,13 +307,18 @@ def fit(
             "train_loss": train_loss,
             "flow_loss": flow_loss,
             "preservation_loss": preservation_loss,
+            "residual_loss": residual_tot / max(nb, 1),
+            "smm_regularization": smm_tot / max(nb, 1),
             "seconds": epoch_time,
         }
         if (epoch + 1) % cfg.eval_every == 0:
-            val = evaluate(ema.module(), val_loader, scaler, cfg, device)
+            val = evaluate(
+                ema.module(), val_loader, scaler, cfg, device,
+                dataset_names=history.get("dataset_names"),
+            )
             rec["val"] = val
-            if val["mae"] < best["mae"] - 1e-6:
-                best = {"mae": val["mae"], "epoch": epoch}
+            if val["nmse"] < best["nmse"] - 1e-6:
+                best = {"nmse": val["nmse"], "epoch": epoch}
                 torch.save(ema.module().state_dict(), ckpt)
                 bad = 0
             else:
@@ -279,11 +327,11 @@ def fit(
         if verbose and (epoch % cfg.log_every == 0):
             v = rec.get("val", {})
             print(
-                "epoch %3d | loss %.4f | val MAE %s | %.1fs | patience %d/%d"
+                "epoch %3d | loss %.4f | val NMSE %s | %.1fs | patience %d/%d"
                 % (
                     epoch,
                     train_loss,
-                    ("%.4f" % v["mae"]) if v else "-",
+                    ("%.4f" % v["nmse"]) if v else "-",
                     epoch_time,
                     bad,
                     cfg.patience,
@@ -302,13 +350,17 @@ def fit(
     if ckpt.exists():
         eval_model.load_state_dict(torch.load(ckpt, map_location=device))
     t0 = time.time()
-    test = evaluate(eval_model, test_loader, scaler, cfg, device)
+    test = evaluate(
+        eval_model, test_loader, scaler, cfg, device,
+        dataset_names=history.get("dataset_names"),
+    )
     history["test"] = test
     history["test_seconds"] = time.time() - t0
     if verbose:
         print(
-            "[test] MAE %.4f  RMSE %.4f  MAPE %.2f%%  (n=%d, %.1fs)"
-            % (test["mae"], test["rmse"], test["mape"], test["n"], history["test_seconds"])
+                "[test] PCC %.4f  NMSE %.4f  PSNR %.2f dB  SNR %.2f dB  (n=%d, %.1fs)"
+                % (test["pcc"], test["nmse"], test["psnr"], test["snr"],
+                    test["n"], history["test_seconds"])
         )
     (out_dir / "history.json").write_text(json.dumps(history, indent=2, default=str))
     return model, eval_model, history
