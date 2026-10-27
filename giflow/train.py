@@ -1,6 +1,6 @@
 """Training / evaluation loop for GiFlow (Appendix C.3 protocol).
 
-Adam, max 300 epochs, early stopping on validation MAE with patience 10,
+Adam, max 300 epochs, early stopping on validation NMSE with patience 10,
 EMA of the weights with decay 0.9999, Euler solver with 20 steps.
 The filtering factors are optimised first (Problem 5) on the training split and
 then frozen for training and inference.
@@ -52,6 +52,7 @@ class TrainConfig:
     prior_renormalize: bool = False
     max_tau: float | None = 10.0
     min_tau_s: float = 0.0
+    min_tau_t: float = 0.0
     normalized_laplacian: bool = False
     # variants
     gaussian_prior: bool = False          # FM-Gauss
@@ -101,6 +102,7 @@ def evaluate(model, loader, scaler, cfg: TrainConfig, device: str, dataset_names
     model.eval()
     joint = isinstance(scaler, (list, tuple))
     accumulators = [MetricAccumulator() for _ in scaler] if joint else [MetricAccumulator()]
+    subject_accumulators = [dict() for _ in accumulators]
     for batch in loader:
         x_true = batch["x_true"].to(device)
         cond = batch["cond_mask"].to(device)
@@ -110,30 +112,75 @@ def evaluate(model, loader, scaler, cfg: TrainConfig, device: str, dataset_names
             x_true, cond, n_steps=cfg.euler_steps,
             timestamps=_timestamps(batch, device), node_mask=node_mask,
         )
+        group_ids = batch.get("group_id")
         if not joint:
-            accumulators[0].update(
-                scaler.inverse_transform(pred), scaler.inverse_transform(x_true), ev
-            )
+            pred_original = scaler.inverse_transform(pred)
+            truth_original = scaler.inverse_transform(x_true)
+            accumulators[0].update(pred_original, truth_original, ev)
+            if group_ids is not None:
+                for index, group_id in enumerate(group_ids):
+                    accumulator = subject_accumulators[0].setdefault(
+                        str(group_id), MetricAccumulator()
+                    )
+                    accumulator.update(
+                        pred_original[index], truth_original[index], ev[index]
+                    )
             continue
         ids = batch["dataset_id"].to(device)
         for dataset_id in torch.unique(ids).tolist():
             selected = ids == dataset_id
             dataset_scaler = scaler[dataset_id]
+            pred_original = dataset_scaler.inverse_transform(pred[selected])
+            truth_original = dataset_scaler.inverse_transform(x_true[selected])
             accumulators[dataset_id].update(
-                dataset_scaler.inverse_transform(pred[selected]),
-                dataset_scaler.inverse_transform(x_true[selected]),
-                ev[selected],
+                pred_original, truth_original, ev[selected],
             )
+            if group_ids is not None:
+                for index in torch.nonzero(selected, as_tuple=False).flatten().tolist():
+                    group_id = str(group_ids[index])
+                    accumulator = subject_accumulators[dataset_id].setdefault(
+                        group_id, MetricAccumulator()
+                    )
+                    accumulator.update(
+                        dataset_scaler.inverse_transform(pred[index]),
+                        dataset_scaler.inverse_transform(x_true[index]),
+                        ev[index],
+                    )
     results = [acc.compute() for acc in accumulators]
-    if not joint:
-        return results[0]
     keys = ("pcc", "nmse", "psnr", "snr", "mae", "rmse", "mape")
+    names = dataset_names or [str(i) for i in range(len(results))]
+    per_subject = {}
+    subject_summary = {}
+    for dataset_id, groups in enumerate(subject_accumulators):
+        if not groups:
+            continue
+        group_results = {
+            group_id: accumulator.compute()
+            for group_id, accumulator in sorted(groups.items())
+        }
+        label = names[dataset_id]
+        per_subject[label] = group_results
+        subject_summary[label] = {
+            key: {
+                "mean": float(np.nanmean([metrics[key] for metrics in group_results.values()])),
+                "std": float(np.nanstd([metrics[key] for metrics in group_results.values()])),
+            }
+            for key in keys
+        }
+        subject_summary[label]["n_subjects"] = len(group_results)
+    if not joint:
+        if per_subject:
+            results[0]["per_subject"] = next(iter(per_subject.values()))
+            results[0]["subject_summary"] = next(iter(subject_summary.values()))
+        return results[0]
     aggregate = {
         key: float(np.nanmean([result[key] for result in results])) for key in keys
     }
     aggregate["n"] = sum(result["n"] for result in results)
-    names = dataset_names or [str(i) for i in range(len(results))]
     aggregate["per_dataset"] = dict(zip(names, results))
+    if per_subject:
+        aggregate["per_subject"] = per_subject
+        aggregate["subject_summary"] = subject_summary
     return aggregate
 
 
@@ -184,6 +231,7 @@ def fit(
         prior_renormalize=cfg.prior_renormalize,
         max_tau=cfg.max_tau,
         min_tau_s=cfg.min_tau_s,
+        min_tau_t=cfg.min_tau_t,
         gaussian_prior=cfg.gaussian_prior,
         max_len=max(
             512, train_ds.window if hasattr(train_ds, "window") else train_ds.datasets[0].window

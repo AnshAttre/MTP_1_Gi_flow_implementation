@@ -126,6 +126,7 @@ class GiFlow(nn.Module):
         prior_renormalize: bool = False,
         max_tau: float | None = 10.0,
         min_tau_s: float = 0.0,
+        min_tau_t: float = 0.0,
         gaussian_prior: bool = False,
         max_len: int = 512,
         n_timestamp_classes: tuple[int, ...] = (),
@@ -151,6 +152,7 @@ class GiFlow(nn.Module):
             renormalize=prior_renormalize,
             max_tau=max_tau,
             min_tau_s=min_tau_s,
+            min_tau_t=min_tau_t,
         )
         self.vector_field = GiFlowVectorField(
             adj_s,

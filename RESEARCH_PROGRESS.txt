@@ -233,3 +233,29 @@ In simple terms, it learns “which way should I move this signal to make it cor
 SRGDiff’s actual method is different: it first trains a VAE to represent high-density EEG, then adds Gaussian noise to those latent representations and trains a denoiser to remove it. Its residual and step-aware modules guide that diffusion process. Copyingthat training method directly would mean changing GiFlow’s path, target, and sampling procedure; it is not just adding a loss term.
 
 Our srg_flow experiment did not switch to diffusion. It kept GiFlow’s flow objective and added SRG-inspired residual and step-aware corrections to its predicted velocity. That makes it a hybrid adaptation, not a reproduction of SRGDiff.
+
+
+//about the training
+The current files confirm the key distinction: SEED-IV metadata contains 15 subjects, but the 2,142 unknown_*.mat recordings used in the run have no subject IDs. I’ve also confirmed the actual split and training stages, so I’ll be precise that this was a window-level holdout, not a subject-independent test.
+
+What The Dataset Contains
+The source SEED dataset has 15 subjects (IDs 1–15) recorded over three sessions. The original metadata also identifies a separate test_data.npz split containing subjects 7, 10, and 15.
+
+But our training used eeg_raw_reconstructed and eeg_raw_reconstructed_l2, not test_data.npz. Each folder had 2,142 paired MATLAB files named unknown_*.mat. Each file contained cz_eeg1, shaped 1,000 time samples × 62 EEG channels. The signal is transposed to channels × time before model input. At the documented 250 Hz, one file is about four seconds of EEG.
+
+The files’ unknown names contain no subject IDs, so we cannot tell which or how many of the 15 subjects appear in this specific run. The two folders are reconstruction variants of the same recordings, not two independent groups of subjects.
+
+How We Split It
+Within each file, the loader formed ten non-overlapping windows of 100 samples each. It kept windows inside their original file, producing 21,420 candidate windows per source. We uniformly thinned that ordered set to 4,000 per source, then split it sequentially::  train 2800 validation 400 test 800
+Thus the test result is a held-out-window result, not a held-out-subject result. Subject leakage across splits is possible because there were no subject IDs available to group by. We should not interpret this as proof that the model generalizes to unseen people.
+
+Each test window has 62 channels × 100 time points. With 50% whole-channel masking, 31 channels are hidden, so the test score covers 2.48 million hidden values per source.
+
+How The Final Model Was Trained
+The actual modified run used srg_flow on the RTX 4050:
+
+Fit separate normalization statistics for each reconstruction source.
+Optimize the graph-prior filtering factors on training windows for 50 epochs, then freeze them.
+Mix training windows from both sources with equal sampling probability.
+Hide half the channels for the reconstruction task, with additional channel dropout during training.
+Train the flow model for up to 80 epochs; select checkpoints using validation NMSE and stop after 10 epochs without improvement. The saved SRG-flow checkpoint’s best epoch was 5.

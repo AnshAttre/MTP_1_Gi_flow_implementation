@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1060" viewBox="0 0 1600 1060" role="img" aria-labelledby="title desc">
+  <title id="title">GiFlow and SRG-flow architecture for EEG imputation</title>
+  <desc id="desc">Paper-style diagram showing dataset windows and masks, graph-informed spatiotemporal prior, conditional flow-matching path, shared GiFlow vector field, optional SRG-inspired residual and step-aware modules, training objectives, and Euler sampling.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#52677d"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3975b7"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c9772d"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #172b3e; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 16px; fill: #506579; }
+      .section { font-size: 18px; font-weight: 700; letter-spacing: .5px; }
+      .box-title { font-size: 16px; font-weight: 700; }
+      .body { font-size: 14px; }
+      .small { font-size: 12px; fill: #43596e; }
+      .equation { font-family: "Cambria Math", Georgia, serif; font-size: 16px; }
+      .shared { fill: #eaf2fb; stroke: #3975b7; stroke-width: 1.8; }
+      .prior { fill: #e9f5f1; stroke: #378b73; stroke-width: 1.8; }
+      .loss { fill: #fff4df; stroke: #d59b37; stroke-width: 1.8; }
+      .srg { fill: #fff0e7; stroke: #c9772d; stroke-width: 1.8; }
+      .neutral { fill: #f3f6f9; stroke: #8092a3; stroke-width: 1.5; }
+      .line { fill: none; stroke: #52677d; stroke-width: 2; marker-end: url(#arrow); }
+      .line-blue { fill: none; stroke: #3975b7; stroke-width: 2; marker-end: url(#arrowBlue); }
+      .line-orange { fill: none; stroke: #c9772d; stroke-width: 2; marker-end: url(#arrowOrange); }
+      .dash { stroke-dasharray: 7 6; }
+    </style>
+  </defs>
+  <rect width="1600" height="1060" fill="#ffffff"/>
+  <text x="56" y="54" class="title">Graph-informed conditional flow for EEG imputation</text>
+  <text x="56" y="82" class="subtitle">Shared GiFlow backbone; SRG-flow adds learned residual direction and step-aware velocity modulation.</text>
+
+  <rect x="42" y="112" width="1516" height="230" rx="16" fill="#f8fafc" stroke="#d9e2ea"/>
+  <text x="64" y="143" class="section">A. INPUTS AND GRAPH-INFORMED SOURCE</text>
+
+  <rect x="66" y="170" width="206" height="74" rx="10" class="neutral"/>
+  <text x="169" y="197" text-anchor="middle" class="box-title">EEG windows</text>
+  <text x="169" y="221" text-anchor="middle" class="small">X₁ ∈ Rᴺˣᴿ; dataset-scaled</text>
+
+  <rect x="66" y="258" width="206" height="62" rx="10" class="neutral"/>
+  <text x="169" y="284" text-anchor="middle" class="box-title">Conditioning mask M</text>
+  <text x="169" y="305" text-anchor="middle" class="small">visible entries / present nodes</text>
+
+  <path d="M272 207 H326" class="line"/>
+  <path d="M272 289 H326" class="line"/>
+  <rect x="326" y="193" width="144" height="92" rx="10" class="shared"/>
+  <text x="398" y="222" text-anchor="middle" class="box-title">Observed signal</text>
+  <text x="398" y="250" text-anchor="middle" class="equation">Xobs = M ⊙ X₁</text>
+  <text x="398" y="271" text-anchor="middle" class="small">masked input</text>
+
+  <rect x="514" y="165" width="346" height="156" rx="12" class="prior"/>
+  <text x="687" y="193" text-anchor="middle" class="box-title">Adaptive spatiotemporal heat filter</text>
+  <text x="687" y="224" text-anchor="middle" class="equation">X₀ = exp(−τₛLₛ) Xobs exp(−τₜLₜ)</text>
+  <text x="687" y="255" text-anchor="middle" class="body">Lₛ: electrode graph · Lₜ: temporal line graph</text>
+  <text x="687" y="282" text-anchor="middle" class="small">τₛ, τₜ fitted on training data, then frozen</text>
+  <text x="687" y="302" text-anchor="middle" class="small">experiment: enforce τₛ ≥ τₛ,min</text>
+  <path d="M470 238 H514" class="line"/>
+
+  <rect x="914" y="170" width="258" height="132" rx="12" class="shared"/>
+  <text x="1043" y="198" text-anchor="middle" class="box-title">Linear conditional path</text>
+  <text x="1043" y="229" text-anchor="middle" class="equation">Xₜ = (1−t)X₀ + tX₁</text>
+  <text x="1043" y="257" text-anchor="middle" class="equation">uₜ = X₁ − X₀</text>
+  <text x="1043" y="282" text-anchor="middle" class="small">sample t ~ Uniform[0, 1]</text>
+  <path d="M860 238 H914" class="line"/>
+  <path d="M272 207 C590 120 750 125 914 200" class="line-blue dash"/>
+  <text x="860" y="166" class="small">X₁ (training only)</text>
+
+  <rect x="1208" y="174" width="300" height="128" rx="12" class="neutral"/>
+  <text x="1358" y="203" text-anchor="middle" class="box-title">Data protocol</text>
+  <text x="1358" y="232" text-anchor="middle" class="body">fit scaler / graph on train split</text>
+  <text x="1358" y="256" text-anchor="middle" class="body">align named electrodes; mask absent nodes</text>
+  <text x="1358" y="280" text-anchor="middle" class="small">dataset-specific statistics and splits</text>
+
+  <rect x="42" y="362" width="1516" height="428" rx="16" fill="#f8fafc" stroke="#d9e2ea"/>
+  <text x="64" y="394" class="section">B. SHARED GiFlow VECTOR FIELD AND SRG-FLOW EXTENSION</text>
+
+  <rect x="66" y="424" width="226" height="142" rx="12" class="shared"/>
+  <text x="179" y="453" text-anchor="middle" class="box-title">Conditioned inputs</text>
+  <text x="179" y="483" text-anchor="middle" class="equation">Xₜ, Xobs, M</text>
+  <text x="179" y="512" text-anchor="middle" class="body">per-entry 3 → H projection</text>
+  <text x="179" y="540" text-anchor="middle" class="small">node-presence mask applied</text>
+
+  <rect x="66" y="606" width="226" height="74" rx="12" class="shared"/>
+  <text x="179" y="635" text-anchor="middle" class="box-title">Flow-time embedding</text>
+  <text x="179" y="659" text-anchor="middle" class="equation">t → eₜ ∈ Rᴴ</text>
+
+  <rect x="352" y="420" width="314" height="90" rx="12" class="shared"/>
+  <text x="509" y="449" text-anchor="middle" class="box-title">Spatial attention (optional)</text>
+  <text x="509" y="475" text-anchor="middle" class="body">learned electrode embeddings + graph GNN</text>
+  <text x="509" y="496" text-anchor="middle" class="small">attention across electrode nodes</text>
+  <rect x="352" y="527" width="314" height="90" rx="12" class="shared"/>
+  <text x="509" y="556" text-anchor="middle" class="box-title">Temporal attention (optional)</text>
+  <text x="509" y="582" text-anchor="middle" class="body">positional encoding + self-attention</text>
+  <text x="509" y="603" text-anchor="middle" class="small">attention across time samples</text>
+  <path d="M292 466 H352" class="line-blue"/>
+  <path d="M292 466 C324 466 322 572 352 572" class="line-blue"/>
+
+  <rect x="730" y="451" width="168" height="136" rx="12" class="shared"/>
+  <text x="814" y="480" text-anchor="middle" class="box-title">Concatenate</text>
+  <text x="814" y="509" text-anchor="middle" class="body">input features</text>
+  <text x="814" y="532" text-anchor="middle" class="body">+ spatial / temporal</text>
+  <text x="814" y="555" text-anchor="middle" class="body">+ time embedding</text>
+  <path d="M666 465 H730" class="line-blue"/>
+  <path d="M666 572 H730" class="line-blue"/>
+  <path d="M292 643 C500 700 680 680 730 560" class="line-blue"/>
+
+  <rect x="938" y="451" width="236" height="136" rx="12" class="shared"/>
+  <text x="1056" y="480" text-anchor="middle" class="box-title">ST message passing</text>
+  <text x="1056" y="510" text-anchor="middle" class="body">K-hop spatial propagation</text>
+  <text x="1056" y="534" text-anchor="middle" class="body">then temporal propagation</text>
+  <text x="1056" y="562" text-anchor="middle" class="small">stacked layers with nonlinearities</text>
+  <path d="M898 519 H938" class="line-blue"/>
+
+  <rect x="1214" y="451" width="188" height="136" rx="12" class="shared"/>
+  <text x="1308" y="480" text-anchor="middle" class="box-title">Output MLP</text>
+  <text x="1308" y="516" text-anchor="middle" class="body">hidden → scalar</text>
+  <text x="1308" y="545" text-anchor="middle" class="equation">vθ(Xₜ, Xobs, M, t)</text>
+  <text x="1308" y="570" text-anchor="middle" class="small">predicted base velocity</text>
+  <path d="M1174 519 H1214" class="line-blue"/>
+
+  <rect x="1430" y="415" width="104" height="207" rx="12" class="srg"/>
+  <text x="1482" y="444" text-anchor="middle" class="box-title">SRG-flow</text>
+  <text x="1482" y="473" text-anchor="middle" class="small">optional</text>
+  <text x="1482" y="507" text-anchor="middle" class="small">Residual</text>
+  <text x="1482" y="525" text-anchor="middle" class="small">direction rθ</text>
+  <text x="1482" y="557" text-anchor="middle" class="small">Step-aware</text>
+  <text x="1482" y="575" text-anchor="middle" class="small">γₜ, βₜ</text>
+  <text x="1482" y="605" text-anchor="middle" class="small">v′ = γₜ(v + λr rθ) + βₜ</text>
+  <path d="M1402 519 H1430" class="line-orange"/>
+
+  <rect x="352" y="656" width="546" height="95" rx="12" class="loss"/>
+  <text x="625" y="684" text-anchor="middle" class="box-title">GiFlow training objective</text>
+  <text x="625" y="711" text-anchor="middle" class="equation">Lflow = ||Mtarget ⊙ (v − uₜ)||²</text>
+  <text x="625" y="736" text-anchor="middle" class="equation">+ λp ||Mcond ⊙ (Xₜ + (1−t)v − X₁)||²</text>
+
+  <rect x="938" y="656" width="596" height="95" rx="12" class="srg"/>
+  <text x="1236" y="684" text-anchor="middle" class="box-title">SRG-flow adds auxiliary supervision</text>
+  <text x="1236" y="711" text-anchor="middle" class="equation">Lres = ||Mtarget ⊙ (rθ − stopgrad(uₜ − v))||²</text>
+  <text x="1236" y="736" text-anchor="middle" class="equation">+ λs ||γₜ − 1, βₜ||²</text>
+  <path d="M1308 587 V634 H898 V696" class="line-blue dash"/>
+  <path d="M1482 622 V640 H1236 V656" class="line-orange"/>
+
+  <rect x="42" y="812" width="1516" height="210" rx="16" fill="#f8fafc" stroke="#d9e2ea"/>
+  <text x="64" y="844" class="section">C. INFERENCE AND EVALUATION</text>
+
+  <rect x="66" y="875" width="250" height="96" rx="12" class="prior"/>
+  <text x="191" y="905" text-anchor="middle" class="box-title">Initialize at graph prior</text>
+  <text x="191" y="937" text-anchor="middle" class="equation">X(0) = X₀</text>
+  <path d="M316 923 H385" class="line"/>
+
+  <rect x="385" y="875" width="368" height="96" rx="12" class="shared"/>
+  <text x="569" y="905" text-anchor="middle" class="box-title">Euler integration, K steps</text>
+  <text x="569" y="936" text-anchor="middle" class="equation">X ← X + (1/K) v′θ(X, Xobs, M, t)</text>
+  <text x="569" y="958" text-anchor="middle" class="small">v′ = vθ for GiFlow; guided velocity for SRG-flow</text>
+  <path d="M753 923 H820" class="line"/>
+
+  <rect x="820" y="875" width="284" height="96" rx="12" class="neutral"/>
+  <text x="962" y="905" text-anchor="middle" class="box-title">Restore observed values</text>
+  <text x="962" y="937" text-anchor="middle" class="equation">Xout = M ⊙ Xobs + (1−M) ⊙ X</text>
+  <path d="M1104 923 H1170" class="line"/>
+
+  <rect x="1170" y="866" width="344" height="114" rx="12" class="loss"/>
+  <text x="1342" y="895" text-anchor="middle" class="box-title">Score hidden targets only</text>
+  <text x="1342" y="922" text-anchor="middle" class="body">PCC · NMSE · PSNR · SNR</text>
+  <text x="1342" y="946" text-anchor="middle" class="body">MAE · RMSE · MAPE</text>
+  <text x="1342" y="968" text-anchor="middle" class="small">report each dataset + macro-average</text>
+
+  <text x="64" y="1005" class="small">Mtarget: artificially hidden values. Mcond: values supplied to the model. Absent electrodes are masked and excluded from scoring.</text>
+</svg>

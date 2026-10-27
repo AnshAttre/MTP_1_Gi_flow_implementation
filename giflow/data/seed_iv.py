@@ -27,6 +27,7 @@ Layout expected under `root` (either is accepted):
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -69,6 +70,21 @@ def _discover(root: Path):
     return found
 
 
+def _subject_id(path: Path) -> str | None:
+    match = re.match(r"^(\d+)(?:_|$)", path.stem)
+    return str(int(match.group(1))) if match else None
+
+
+def _requested_subject_ids(subjects: tuple[str, ...] | None) -> set[str] | None:
+    if subjects is None:
+        return None
+    normalized = set()
+    for subject in subjects:
+        match = re.match(r"^(?:s)?0*(\d+)$", str(subject), re.IGNORECASE)
+        normalized.add(str(int(match.group(1))) if match else str(subject))
+    return normalized
+
+
 def _channel_names(n_channels: int):
     if n_channels != len(SEED_IV_CHANNELS):
         raise ValueError(
@@ -103,9 +119,11 @@ def load_seed_iv(
             electrode) rather than scattered point dropout.
     """
     root = Path(root)
+    if window < 1:
+        raise ValueError("window must be positive")
     if root.is_file() and root.suffix == ".npz":
         z = np.load(root, allow_pickle=True)
-        x = z["x"].astype(np.float64)
+        x = z["x"].astype(np.float32)
         adj = z["adj"].astype(np.float64) if "adj" in z else None
         mask = z["mask"].astype(np.float64) if "mask" in z else np.ones_like(x)
         name = "SEED-IV(packed:%s)" % root.stem
@@ -134,23 +152,120 @@ def load_seed_iv(
         mat_paths = sorted(root.rglob("*.mat"))
         if not mat_paths:
             raise FileNotFoundError("no X_prc1.npy or .mat recordings found under %s" % root)
+        wanted_subjects = _requested_subject_ids(subjects)
+        if wanted_subjects is not None:
+            mat_paths = [
+                path for path in mat_paths
+                if _subject_id(path) in wanted_subjects
+            ]
+        if sessions:
+            wanted_sessions = set(map(str, sessions))
+            mat_paths = [
+                path for path in mat_paths
+                if path.parent.name in wanted_sessions
+            ]
         if max_recordings is not None:
+            if max_recordings < 1:
+                raise ValueError("max_recordings must be positive")
             mat_paths = mat_paths[:max_recordings]
-        from scipy.io import loadmat
+        if not mat_paths:
+            raise ValueError("no MATLAB recordings left after filtering by session/subject")
 
-        chunks, segments, cursor = [], [], 0
-        for path in mat_paths:
-            values = loadmat(path).get("cz_eeg1")
-            if values is None or values.ndim != 2:
-                raise ValueError("%s must contain a 2-D cz_eeg1 array" % path)
-            if values.shape[1] == len(SEED_IV_CHANNELS):
-                values = values.T
-            elif values.shape[0] != len(SEED_IV_CHANNELS):
-                raise ValueError("cannot identify 62-channel axis in %s: %s" % (path, values.shape))
-            values = np.asarray(values, dtype=np.float64)
-            chunks.append(values)
-            segments.append((cursor, cursor + values.shape[1]))
-            cursor += values.shape[1]
+        from scipy.io import loadmat, whosmat
+
+        # Inspect MATLAB headers first, then choose evenly-spaced windows per
+        # participant. Only selected trial variables are loaded on the second
+        # pass, keeping the joint DEAP/SEED experiment memory-bounded.
+        inventory = []
+        subject_windows: dict[str, list[tuple[int, str, int]]] = {}
+        for path_index, path in enumerate(mat_paths):
+            subject_id = _subject_id(path)
+            if subject_id is None:
+                raise ValueError(
+                    "cannot determine a participant ID from MATLAB filename %s"
+                    % path.name
+                )
+            trials = []
+            for variable, shape, _ in whosmat(path):
+                if not re.fullmatch(r"[a-z0-9]+_eeg\d+", variable, re.IGNORECASE):
+                    continue
+                if len(shape) != 2 or shape.count(len(SEED_IV_CHANNELS)) != 1:
+                    continue
+                channel_axis = shape.index(len(SEED_IV_CHANNELS))
+                n_samples = shape[1 - channel_axis]
+                n_windows = n_samples // window
+                if n_windows:
+                    trials.append((variable, channel_axis, n_windows))
+                    if max_windows_per_subject is not None:
+                        subject_windows.setdefault(subject_id, []).extend(
+                            (path_index, variable, local_index)
+                            for local_index in range(n_windows)
+                        )
+            if trials:
+                inventory.append((path_index, path, subject_id, trials))
+        if not inventory:
+            raise ValueError(
+                "no 62-channel EEG trial variables found in MATLAB files under %s"
+                % root
+            )
+        if max_windows_per_subject is not None:
+            if max_windows_per_subject < 1:
+                raise ValueError("max_windows_per_subject must be positive")
+            selected_by_subject = {}
+            for subject_id, candidates in subject_windows.items():
+                count = min(max_windows_per_subject, len(candidates))
+                selected_indices = np.linspace(
+                    0, len(candidates) - 1, count
+                ).round().astype(int)
+                selected_by_subject[subject_id] = {
+                    candidates[index] for index in selected_indices
+                }
+        else:
+            selected_by_subject = None
+
+        chunks, segments, segment_group_ids = [], [], []
+        cursor = 0
+        for path_index, path, subject_id, trials in inventory:
+            selected = (
+                None if selected_by_subject is None
+                else selected_by_subject[subject_id]
+            )
+            variables = (
+                [variable for variable, _, _ in trials]
+                if selected is None
+                else sorted({
+                    variable for index, variable, _ in selected
+                    if index == path_index
+                })
+            )
+            values_by_variable = (
+                loadmat(path, variable_names=variables) if variables else {}
+            )
+            for variable, channel_axis, n_windows in trials:
+                chosen_windows = (
+                    range(n_windows)
+                    if selected is None
+                    else [
+                        local_index for local_index in range(n_windows)
+                        if (path_index, variable, local_index) in selected
+                    ]
+                )
+                if not chosen_windows:
+                    continue
+                values = values_by_variable[variable]
+                if channel_axis == 1:
+                    values = values.T
+                values = np.asarray(values, dtype=np.float32)
+                if not np.isfinite(values).all():
+                    raise ValueError("%s:%s contains non-finite EEG samples" % (path, variable))
+                for local_index in chosen_windows:
+                    chunk = values[
+                        :, local_index * window : (local_index + 1) * window
+                    ]
+                    chunks.append(chunk)
+                    segments.append((cursor, cursor + chunk.shape[1]))
+                    segment_group_ids.append(subject_id)
+                    cursor += chunk.shape[1]
         x = np.concatenate(chunks, axis=1)
         adj = _correlation_adjacency(x[:, : int(0.7 * x.shape[1])], threshold)
         mask = np.ones_like(x)
@@ -160,10 +275,14 @@ def load_seed_iv(
             mask[dead] = 0.0
         if verbose:
             print("[seed-iv] loaded %d MATLAB recordings (%d channels, %d samples)"
-                  % (len(chunks), x.shape[0], x.shape[1]))
+                  % (len(inventory), x.shape[0], x.shape[1]))
         return DatasetBundle(
             "SEED-IV-MAT", x, mask, adj, channel_names=_channel_names(x.shape[0]),
             segments=segments,
+            segment_group_ids=(
+                None if any(group is None for group in segment_group_ids)
+                else segment_group_ids
+            ),
         )
     if sessions:
         found = [f for f in found if f[0] in sessions]
@@ -175,17 +294,24 @@ def load_seed_iv(
     chunks = []
     used = []
     segments = []
+    segment_group_ids = []
     cursor = 0
     for session, subject, path in found:
         arr = np.load(path, mmap_mode="r")
-        n = arr.shape[0] if max_windows_per_subject is None else min(
-            arr.shape[0], max_windows_per_subject
-        )
-        a = np.asarray(arr[:n], dtype=np.float64)     # (n, 62, 1000)
+        if max_windows_per_subject is None:
+            selected = np.arange(arr.shape[0])
+        else:
+            if max_windows_per_subject < 1:
+                raise ValueError("max_windows_per_subject must be positive")
+            n = min(arr.shape[0], max_windows_per_subject)
+            selected = np.linspace(0, arr.shape[0] - 1, n).round().astype(int)
+        a = np.asarray(arr[selected], dtype=np.float32)     # (n, 62, time)
         # (n, C, T) -> (C, n*T): lay the windows end to end along time
         chunk = a.transpose(1, 0, 2).reshape(a.shape[1], -1)
         chunks.append(chunk)
         segments.append((cursor, cursor + chunk.shape[1]))
+        subject_id = subject.split("_", 1)[0]
+        segment_group_ids.append(subject_id)
         cursor += chunk.shape[1]
         used.append("%s/%s[%d]" % (session, subject, n))
     x = np.concatenate(chunks, axis=1)
@@ -214,5 +340,6 @@ def load_seed_iv(
               % (x.shape[0], x.shape[1], adj.sum(1).mean()))
 
     return DatasetBundle(
-        "SEED-IV", x, mask, adj, channel_names=_channel_names(x.shape[0]), segments=segments
+        "SEED-IV", x, mask, adj, channel_names=_channel_names(x.shape[0]),
+        segments=segments, segment_group_ids=segment_group_ids,
     )

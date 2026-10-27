@@ -25,6 +25,7 @@ from giflow.baselines import run_baselines
 from giflow.data.dataset import build_splits, make_loaders
 from giflow.data.datasets import align_bundles, load_dataset
 from giflow.data.graph import gcn_normalize, laplacian
+from giflow.data.seed_iv import _correlation_adjacency
 from giflow.metrics import aggregate_trials
 from giflow.train import TrainConfig, fit
 
@@ -47,7 +48,10 @@ def parse_args(argv=None):
     p.add_argument("--datasets", nargs="+", default=None,
                    help="jointly train on multiple datasets, e.g. seed4 seed4")
     p.add_argument("--variant", default="giflow", choices=sorted(VARIANTS))
-    p.add_argument("--missing", default="point", choices=["point", "block", "channel"])
+    p.add_argument(
+        "--missing", default="point",
+        choices=["point", "block", "stream", "channel"],
+    )
     p.add_argument("--rho", type=float, default=0.2)
     p.add_argument("--window", type=int, default=24)
     p.add_argument("--stride", type=int, default=1)
@@ -59,6 +63,10 @@ def parse_args(argv=None):
     # SEED-IV knobs
     p.add_argument("--seed-root", default="data/seed4",
                    help="SEED-IV root dir, or a packed .npz")
+    p.add_argument("--deap-root", default="data/DEAP-RAW",
+                   help="directory containing DEAP subject BDF recordings")
+    p.add_argument("--deap-sfreq", type=float, default=200.0,
+                   help="target sampling rate for DEAP BDF resampling")
     p.add_argument("--seed-roots", nargs="+", default=None,
                    help="one SEED-IV root per item in --datasets")
     p.add_argument("--subjects", nargs="*", default=None)
@@ -96,10 +104,16 @@ def parse_args(argv=None):
                    help="upper bound on the filtering factors; 0 disables the bound")
     p.add_argument("--min-tau-s", type=float, default=0.0,
                    help="lower bound on spatial filtering; use >0 to force smoothing")
+    p.add_argument("--min-tau-t", type=float, default=0.0,
+                   help="lower bound on temporal filtering; use >0 to force smoothing")
     p.add_argument("--normalized-laplacian", action="store_true",
                    help="use the symmetric normalised Laplacian instead of D-A")
     # budget controls, important on CPU
     p.add_argument("--max-windows", type=int, default=None)
+    p.add_argument("--split-mode", choices=["window", "subject"], default="window",
+                   help="window-level split or disjoint participant groups")
+    p.add_argument("--split-seed", type=int, default=0,
+                   help="fixed seed for participant assignment, independent of model seed")
     p.add_argument("--threads", type=int, default=None)
     p.add_argument("--device", default="cpu")
     p.add_argument("--seeds", type=int, default=1)
@@ -130,6 +144,15 @@ def build(args, seed):
                 threshold=args.threshold,
                 channel_dropout=args.channel_dropout,
             )
+        elif name.lower() in ("deap", "deap-raw", "deap_raw"):
+            kw = dict(
+                root=args.deap_root,
+                target_sfreq=args.deap_sfreq,
+                threshold=args.threshold,
+                subjects=tuple(args.subjects) if args.subjects else None,
+                max_windows_per_subject=args.max_windows_per_subject,
+                window=args.window,
+            )
         bundles.append(load_dataset(name, **kw))
 
     aligned, combined_adj, channel_names = align_bundles(bundles)
@@ -139,6 +162,7 @@ def build(args, seed):
 
     split_groups, scalers, infos = [], [], []
     for dataset_id, bundle in enumerate(aligned):
+        dataset_name = names[dataset_id].lower()
         train_ds, val_ds, test_ds, scaler, info = build_splits(
             bundle.x,
             bundle.observed_mask,
@@ -152,6 +176,16 @@ def build(args, seed):
             segments=bundle.segments,
             dataset_id=dataset_id,
             node_presence=bundle.node_presence,
+            channel_ids=bundle.channel_names,
+            segment_group_ids=bundle.segment_group_ids,
+            split_mode=args.split_mode,
+            split_seed=args.split_seed,
+            test_groups=(
+                ("7", "10", "15")
+                if args.split_mode == "subject"
+                and dataset_name in ("seed4", "seed-iv", "seediv", "seed_iv")
+                else None
+            ),
         )
         split_groups.append((train_ds, val_ds, test_ds))
         scalers.append(scaler)
@@ -164,6 +198,34 @@ def build(args, seed):
             ConcatDataset([group[part] for group in split_groups]) for part in range(3)
         )
         scaler = scalers
+
+    # Estimate EEG graphs from training windows only so subject-held-out test
+    # participants cannot influence graph construction.
+    edge_sum = np.zeros_like(aligned[0].adj_s)
+    edge_count = np.zeros_like(edge_sum)
+    for bundle, group_splits in zip(aligned, split_groups):
+        train_dataset = group_splits[0]
+        graph_indices = train_dataset.indices
+        if len(graph_indices) > 2000:
+            graph_indices = graph_indices[
+                np.linspace(0, len(graph_indices) - 1, 2000).round().astype(int)
+            ]
+        train_values = np.concatenate(
+            [
+                bundle.x[:, int(start) : int(start) + args.window]
+                for start in graph_indices
+            ],
+            axis=1,
+        )
+        train_adj = _correlation_adjacency(train_values, args.threshold)
+        pair_presence = np.outer(bundle.node_presence, bundle.node_presence)
+        bundle.adj_s = train_adj * pair_presence
+        edge_sum += bundle.adj_s
+        edge_count += pair_presence
+    combined_adj = np.divide(
+        edge_sum, edge_count, out=np.zeros_like(edge_sum), where=edge_count > 0
+    )
+    np.fill_diagonal(combined_adj, 0.0)
 
     graphs = aligned[0].graphs(
         args.window, normalized_laplacian=args.normalized_laplacian
@@ -207,20 +269,20 @@ def main(argv=None):
             for item in info["datasets"]:
                 print("[data] %s windows=%d split=%s eval_rate=%.3f"
                       % (item["name"], item["n_windows"], item["split_sizes"], item["eval_rate"]))
+        print("[data] split mode=%s" % args.split_mode)
 
-        if i == 0 and not args.skip_baselines and len(bundles) == 1:
+        if i == 0 and not args.skip_baselines:
             _, _, test_loader = make_loaders(*splits, batch_size=args.batch_size)
             t0 = time.time()
             base = run_baselines(
-                test_loader, scaler, graphs["adj_s"], graphs["adj_s_norm"]
+                test_loader, scaler, graphs["adj_s"], graphs["adj_s_norm"],
+                dataset_names=dataset_labels,
             )
             print("[baselines] (%.1fs)" % (time.time() - t0))
             for k, v in base.items():
-                    print("   %-8s PCC %7.4f  NMSE %8.4f  PSNR %7.2f dB  SNR %7.2f dB"
-                        % (k, v["pcc"], v["nmse"], v["psnr"], v["snr"]))
+                print("   %-8s PCC %7.4f  NMSE %8.4f  PSNR %7.2f dB  SNR %7.2f dB"
+                      % (k, v["pcc"], v["nmse"], v["psnr"], v["snr"]))
             (out_root / "baselines.json").write_text(json.dumps(base, indent=2))
-        elif i == 0 and len(bundles) > 1 and not args.skip_baselines:
-            print("[baselines] skipped for joint training; baseline runners are single-dataset")
 
         cfg = TrainConfig(
             lr=args.lr,
@@ -246,6 +308,7 @@ def main(argv=None):
             ),
             max_tau=(None if args.max_tau <= 0 else args.max_tau),
             min_tau_s=args.min_tau_s,
+            min_tau_t=args.min_tau_t,
             normalized_laplacian=args.normalized_laplacian,
             seed=seed,
             device=args.device,

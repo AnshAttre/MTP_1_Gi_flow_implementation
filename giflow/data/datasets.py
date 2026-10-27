@@ -36,11 +36,11 @@ class DatasetBundle:
 
     def __init__(
         self, name, x, observed_mask, adj_s, timestamps=None, ts_classes=(),
-        channel_names=None, segments=None, node_presence=None,
+        channel_names=None, segments=None, node_presence=None, segment_group_ids=None,
     ):
         self.name = name
-        self.x = np.asarray(x, dtype=np.float64)          # (N, R_total)
-        self.observed_mask = np.asarray(observed_mask, dtype=np.float64)
+        self.x = np.asarray(x, dtype=np.float32)          # (N, R_total)
+        self.observed_mask = np.asarray(observed_mask, dtype=np.float32)
         self.adj_s = np.asarray(adj_s, dtype=np.float64)  # (N, N)
         self.timestamps = timestamps                      # (R_total, n_fields) int codes
         self.ts_classes = tuple(ts_classes)
@@ -50,6 +50,15 @@ class DatasetBundle:
         )
         self.channel_names = tuple(_canonical_channel_name(v) for v in raw_names)
         self.segments = None if segments is None else tuple(segments)
+        self.segment_group_ids = (
+            None if segment_group_ids is None else tuple(map(str, segment_group_ids))
+        )
+        if (
+            self.segments is not None
+            and self.segment_group_ids is not None
+            and len(self.segments) != len(self.segment_group_ids)
+        ):
+            raise ValueError("segment_group_ids must contain one identifier per segment")
         self.node_presence = np.asarray(
             np.ones(self.x.shape[0]) if node_presence is None else node_presence,
             dtype=np.float64,
@@ -100,7 +109,7 @@ def align_bundles(bundles: list[DatasetBundle]):
 
     for bundle in bundles:
         indices = np.asarray([channel_index[name] for name in bundle.channel_names])
-        x = np.zeros((len(channel_names), bundle.x.shape[1]), dtype=np.float64)
+        x = np.zeros((len(channel_names), bundle.x.shape[1]), dtype=np.float32)
         mask = np.zeros_like(x)
         x[indices] = bundle.x
         mask[indices] = bundle.observed_mask
@@ -113,7 +122,7 @@ def align_bundles(bundles: list[DatasetBundle]):
         aligned.append(DatasetBundle(
             bundle.name, x, mask, adj, bundle.timestamps, bundle.ts_classes,
             channel_names=channel_names, segments=bundle.segments,
-            node_presence=present,
+            node_presence=present, segment_group_ids=bundle.segment_group_ids,
         ))
 
     combined_adj = np.divide(edge_sum, edge_count, out=np.zeros_like(edge_sum), where=edge_count > 0)
@@ -265,4 +274,8 @@ def load_dataset(name: str, **kw) -> DatasetBundle:
         from .seed_iv import load_seed_iv
 
         return load_seed_iv(**kw)
+    if name in ("deap", "deap-raw", "deap_raw"):
+        from .deap import load_deap
+
+        return load_deap(**kw)
     raise ValueError("unknown dataset: %r" % name)

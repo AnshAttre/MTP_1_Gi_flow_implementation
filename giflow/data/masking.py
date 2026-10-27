@@ -55,27 +55,94 @@ def block_missing(
 
 def channel_missing(mask: np.ndarray, rho: float, rng: np.random.Generator) -> np.ndarray:
     """Remove a fraction of whole channels for the dead-electrode setting."""
-    n_channels = mask.shape[0]
+    available_channels = np.flatnonzero(mask.sum(axis=1) > 0)
+    n_channels = len(available_channels)
     n_drop = min(n_channels, int(round(rho * n_channels)))
     out = np.zeros_like(mask)
     if n_drop == 0:
         return out
-    channels = rng.choice(n_channels, size=n_drop, replace=False)
+    channels = rng.choice(available_channels, size=n_drop, replace=False)
     out[channels] = mask[channels]
     return out
 
 
-def make_eval_mask(
-    observed_mask: np.ndarray, strategy: str, rho: float, seed: int = 0, **kw
+def stream_missing(
+    mask: np.ndarray,
+    rho: float,
+    rng: np.random.Generator,
+    min_len: int = 20,
+    max_len: int = 80,
 ) -> np.ndarray:
-    """Dispatch. `observed_mask` marks genuinely available data (1 = present)."""
+    """Remove shared contiguous time intervals across all available channels."""
+    n_channels, n_steps = mask.shape
+    target = int(round(rho * int(mask.sum())))
+    out = np.zeros_like(mask)
+    if target == 0:
+        return out
+    if min_len < 1 or max_len < min_len:
+        raise ValueError("stream block lengths must satisfy 1 <= min_len <= max_len")
+    attempts = 0
+    max_attempts = 100 * (target // min_len + 1) + 1000
+    while out.sum() < target and attempts < max_attempts:
+        attempts += 1
+        length = int(rng.integers(min_len, max_len + 1))
+        start = int(rng.integers(0, max(n_steps - length + 1, 1)))
+        end = min(start + length, n_steps)
+        out[:, start:end] = np.maximum(out[:, start:end], mask[:, start:end])
+    excess = int(out.sum()) - target
+    if excess > 0:
+        fully_hidden_columns = [
+            step for step in range(n_steps)
+            if out[:, step].sum() > 0 and np.array_equal(out[:, step], mask[:, step])
+        ]
+        for step in reversed(fully_hidden_columns):
+            count = int(out[:, step].sum())
+            if count <= excess:
+                out[:, step] = 0.0
+                excess -= count
+            if excess == 0:
+                break
+    if excess > 0:
+        indices = np.argwhere(out > 0)
+        trim = rng.choice(len(indices), size=excess, replace=False)
+        out[indices[trim, 0], indices[trim, 1]] = 0.0
+    return out
+
+
+def make_eval_mask(
+    observed_mask: np.ndarray,
+    strategy: str,
+    rho: float,
+    seed: int = 0,
+    channel_ids: tuple[str, ...] | None = None,
+    **kw,
+) -> np.ndarray:
+    """Dispatch with optional channel-name-stable random masks."""
     rng = np.random.default_rng(seed)
+    if channel_ids is not None:
+        if len(channel_ids) != observed_mask.shape[0]:
+            raise ValueError("channel_ids must contain one identifier per channel")
+        available = np.flatnonzero(np.asarray(observed_mask).sum(axis=1) > 0)
+        ordered = sorted(available, key=lambda index: str(channel_ids[index]).upper())
+        out = np.zeros_like(observed_mask)
+        if not ordered:
+            return out
+        out[ordered] = _make_eval_mask(
+            np.asarray(observed_mask)[ordered], strategy, rho, rng, kw
+        )
+        return out
+    return _make_eval_mask(observed_mask, strategy, rho, rng, kw)
+
+
+def _make_eval_mask(observed_mask, strategy, rho, rng, kw):
     if strategy == "point":
         return point_missing(observed_mask, rho, rng)
     if strategy == "block":
         return block_missing(observed_mask, rho, rng, **kw)
     if strategy in ("channel", "electrode"):
         return channel_missing(observed_mask, rho, rng)
+    if strategy in ("stream", "outage"):
+        return stream_missing(observed_mask, rho, rng, **kw)
     raise ValueError(f"unknown missing strategy: {strategy!r}")
 
 

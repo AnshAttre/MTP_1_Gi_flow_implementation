@@ -1,0 +1,144 @@
+% Template for ISBI paper; to be used with:
+%          spconf.sty  - ICASSP/ICIP LaTeX style file, and
+%          IEEEbib.bst - IEEE bibliography style file.
+% --------------------------------------------------------------------------
+\documentclass{article}
+\usepackage{spconf,amsmath,graphicx}
+
+% It's fine to compress itemized lists if you used them in the
+% manuscript
+\usepackage{enumitem}
+\setlist{nosep, leftmargin=14pt}
+
+\usepackage{mwe} % to get dummy images
+
+% Example definitions.
+% --------------------
+\def\x{{\mathbf x}}
+\def\L{{\cal L}}
+
+% Title.
+% ------
+\title{Author guidelines for ISBI 1-page abstract manuscripts}
+%
+% Single address.
+% ---------------
+\name{Author(s) Name(s)\thanks{A footnote can be used to report funding sources and other potential conflicts of interest. Use Times 9-point type, single-spaced.}}
+\address{Author Affiliation(s)}
+%
+% For example:
+% ------------
+%\address{School\\
+%	Department\\
+%	Address}
+%
+% Two addresses (uncomment and modify for two-address case).
+% ----------------------------------------------------------
+%\twoauthors
+%  {A. Author-one, B. Author-two\sthanks{Some author footnote.}}
+%	{School A-B\\
+%	Department A-B\\
+%	Address A-B}
+%  {C. Author-three, D. Author-four\sthanks{The fourth author performed the work
+%	while at ...}}
+%	{School C-D\\
+%	Department C-D\\
+%	Address C-D}
+%
+% More than two addresses
+% -----------------------
+% \name{Author Name$^{\star \dagger}$ \qquad Author Name$^{\star}$ \qquad Author Name$^{\dagger}$}
+%
+% \address{$^{\star}$ Affiliation Number One \\
+%     $^{\dagger}$}Affiliation Number Two
+%
+\begin{document}
+%\ninept
+%
+\maketitle
+
+Please look at the template and guidelines for the full proceedings submissions
+for detailed information about style requirements (fonts, spacing, referencing,
+etc.). One-page abstract submissions should contain all the information on a
+single page. You may structure your one-page submission using an introductory
+paragraph serving as an “abstract section” for your one-page abstract.
+
+
+
+\section{Major headings}
+%
+Major headings should be used to structure your one-page abstract.
+
+
+\section{Formatting your paper}
+%
+Do not write or print anything outside the print area. All text must be in a
+two-column format. Text must be fully justified.
+
+Please do \textbf{not} paginate your paper.
+
+Avoid using footnotes altogether and include necessary peripheral observations
+in the text .
+
+
+\section{Other information}
+%
+Illustrations must appear within the designated margins.  They may span the two
+columns.  If possible, position illustrations at the top of columns, rather than in
+the middle or at the bottom.  Caption and number every illustration.
+
+Since there are many ways, often incompatible, of including images (e.g., with
+experimental results) in a \LaTeX\ document, below is an example of how to do
+this \cite{Lamp86}.
+
+% Below is an example of how to insert images. Delete the ``\vspace'' line,
+% uncomment the preceding line ``\centerline...'' and replace ``imageX.ps''
+% with a suitable PostScript file name.
+% -------------------------------------------------------------------------
+\begin{figure}[htb]
+
+\begin{minipage}[b]{1.0\linewidth}
+  \centering
+  \centerline{\includegraphics[width=8.5cm]{example-image}}
+%  \vspace{2.0cm}
+  \centerline{(a) Result 1}\medskip
+\end{minipage}
+%
+\begin{minipage}[b]{.48\linewidth}
+  \centering
+  \centerline{\includegraphics[width=4.0cm]{example-image}}
+%  \vspace{1.5cm}
+  \centerline{(b) Results 3}\medskip
+\end{minipage}
+\hfill
+\begin{minipage}[b]{0.48\linewidth}
+  \centering
+  \centerline{\includegraphics[width=4.0cm]{example-image}}
+%  \vspace{1.5cm}
+  \centerline{(c) Result 4}\medskip
+\end{minipage}
+%
+\caption{Example of placing a figure with experimental results.}
+\label{fig:res}
+%
+\end{figure}
+
+List and number all bibliographical references at the end of the paper and
+reference them in the text using square brackets \cite{C2} or \cite{C2, Lamp86}
+for several references.
+
+Reporting on real or potential conflicts of interests, or the absence thereof, is
+required in the paper.
+
+Reporting on compliance with ethical standards is required (irrespective of
+whether ethical approval was needed for the study) in the
+paper.\footnote{A footnote can also be used to report on ethical compliance.}
+
+% References should be produced using the bibtex program from suitable
+% BiBTeX files (here: strings, refs, manuals). The IEEEbib.bst bibliography
+% style file from IEEE produces unsorted bibliography list.
+% ------------------------------------------------------------------------- 
+\bibliographystyle{IEEEbib}
+\bibliography{strings,refs}
+
+\end{document}

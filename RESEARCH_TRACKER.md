@@ -61,6 +61,7 @@ an interface check, not a quality result.
 | Whole-channel missing | `--missing channel --rho 0.5` | Hide 50% of electrodes and score all their samples |
 | Training electrode dropout | `--train-channel-drop-prob 0.5` | Randomly hide electrodes during training |
 | Forced spatial smoothing | `--min-tau-s 0.25` | Prevent `tau_s` collapsing to zero |
+| Forced temporal smoothing | `--min-tau-t <value>` | Prevent `tau_t` collapsing to zero; evaluate floors as a controlled sweep |
 | Per-step observed clamp | `--clamp-observed-each-step` | Clamp visible entries after each Euler update |
 | Preservation off | `--preservation-weight 0` | Ablation for the preservation loss |
 | Normalized graph | `--normalized-laplacian` | Alternative Laplacian scaling |
@@ -76,14 +77,15 @@ factor at a time.
 1. **Control:** existing point-missing configuration.
 2. **Mask pattern:** `--missing channel --rho 0.5`.
 3. **Training robustness:** channel evaluation plus `--train-channel-drop-prob 0.5`.
-4. **Spatial prior:** repeat step 3 with `--min-tau-s 0.25`.
-5. **Numerical path:** compare default final-only restoration with
+4. **Spatial prior:** repeat step 3 with candidate `--min-tau-s` floors.
+5. **Temporal prior:** repeat step 3 with candidate `--min-tau-t` floors.
+6. **Numerical path:** compare default final-only restoration with
    `--clamp-observed-each-step`.
-6. **Loss ablation:** compare `--preservation-weight 0` and `0.1` under the
+7. **Loss ablation:** compare `--preservation-weight 0` and `0.1` under the
    same channel-missing setting.
-7. **Regularization:** repeat the best configuration with higher dropout, for
+8. **Regularization:** repeat the best configuration with higher dropout, for
    example `--dropout 0.3`, lower learning rate, and higher weight decay.
-8. **Reliability:** run the final candidates over seeds 0..4 and report mean/std.
+9. **Reliability:** run the final candidates over seeds 0..4 and report mean/std.
 
 Example command:
 
@@ -156,9 +158,123 @@ The runner now reports PCC, NMSE, PSNR, and the paper's SNR, while retaining
 MAE/RMSE/MAPE for continuity. The committed C0 checkpoint predates those
 metrics; its PCC/NMSE/PSNR/SNR values remain pending reevaluation.
 
+## Historical raw DEAP + SEED-IV participant-held-out pilot (superseded)
+
+The results in this subsection predate canonical name-keyed evaluation masks.
+Retain them only for run provenance; use the matched raw-data comparison below
+for current joint-versus-individual conclusions.
+
+Runs `study_subject_giflow_channel50_seed0` and
+`study_subject_srgflow_channel50_seed0` completed on the RTX 4050. This is a
+one-seed pilot comparison, not a final result. Both trained jointly
+on DEAP-RAW and the original SEED-IV MATLAB files using 25 evenly spaced
+100-sample windows per participant, 50% whole-channel evaluation masking,
+50% training channel dropout, batch size 32, 20 tau-optimization epochs,
+10 Euler steps, a maximum of 50 flow epochs, and patience 8. Early stopping
+selected GiFlow epoch 10 and SRG-flow epoch 7. Training took 134.7 and 120.4
+seconds, respectively, after data preparation. Learned factors were
+`tau_s=0.0158, tau_t=0.0272` (GiFlow) and
+`tau_s=0.0166, tau_t=0.0293` (SRG-flow). No tau floor was used.
+
+SEED-IV test participants were 7, 10, and 15; DEAP used the deterministic
+participant split from split seed 0 (test participants 03, 05, 11, 12, 22,
+26). Validation and test participants were disjoint from training. GiFlow's
+unchanged checkpoint was reevaluated after participant-level scoring was
+added; its pooled metrics matched the original run.
+
+| Model | Source | PCC | NMSE | PSNR (dB) | SNR (dB) | MAE | RMSE |
+|---|---|---:|---:|---:|---:|---:|---:|
+| GiFlow | DEAP-RAW | 0.6328 | 0.5931 | 26.19 | 2.27 | 0.00855 | 0.02781 |
+| GiFlow | SEED-IV-MAT | 0.5608 | 0.7242 | 32.87 | 1.40 | 10.4459 | 17.8611 |
+| GiFlow | Macro mean | 0.5968 | 0.6587 | 29.53 | 1.84 | 5.2272 | 8.9445 |
+| SRG-flow | DEAP-RAW | 0.6315 | 0.5997 | 26.14 | 2.22 | 0.00878 | 0.02797 |
+| SRG-flow | SEED-IV-MAT | 0.5938 | 0.7852 | 32.52 | 1.05 | 12.7264 | 18.5986 |
+| SRG-flow | Macro mean | 0.6127 | 0.6925 | 29.33 | 1.64 | 6.3676 | 9.3133 |
+
+KNN spatial interpolation had DEAP-RAW NMSE 0.5938 / PCC 0.6320 and
+SEED-IV-MAT NMSE 0.6141 / PCC 0.6255, giving macro NMSE 0.6040 / PCC 0.6288.
+Thus neither learned variant beat KNN on macro NMSE, and neither should be presented as a win. SRG-flow's
+macro PCC was higher than GiFlow's, but its macro NMSE/SNR were worse.
+Differences in physical scale (DEAP volts versus SEED-IV source units) make pooled MAE and
+PSNR across datasets descriptive only; per-source normalized metrics are the
+primary cross-dataset comparison. Participant-level scoring was added after
+the GiFlow run and then recomputed from its unchanged checkpoint; its pooled
+scores matched the original within 1e-5. Equal-participant mean +/- std PCC /
+NMSE were 0.232 +/- 0.390 / 0.650 +/- 0.486 (DEAP) and
+0.558 +/- 0.178 / 0.749 +/- 0.302 (SEED-IV) for GiFlow; corresponding
+SRG-flow values were 0.226 +/- 0.402 / 0.669 +/- 0.462 and
+0.580 +/- 0.116 / 0.798 +/- 0.144. Full run configuration and traces are in
+`runs/study_subject_giflow_channel50_seed0/summary.json`,
+`runs/study_subject_giflow_channel50_seed0/history.json`, and
+`runs/study_subject_giflow_channel50_seed0/baselines.json`.
+
+Matched SRG-flow traces are in
+`runs/study_subject_srgflow_channel50_seed0/`. The comparison figure is
+`paper/figures/subject_channel50_pilot_comparison.png`. The same channel-mask
+comparison must be repeated for multiple seeds and candidate tau floors before
+inference.
+
 ## Next updates
 
 After each run, append its output directory, exact command, metrics, factors,
 and a one-sentence conclusion to the experiment log. Keep this file committed
 with the corresponding `summary.json` and `history.json` so results remain
 traceable.
+
+### Channel-mask alignment correction
+
+The original joint and individual channel pilots used the same seed but did
+not guarantee the same named electrodes were hidden: mask sampling followed
+the local/aligned row order. A fixed seed now samples in canonical electrode
+name order, making per-electrode masks invariant to row reordering and
+union-padding. Regression tests verify this for point, block, channel, and
+shared-stream masks. The initial joint-versus-individual scores remain
+unmatched exploratory results and are excluded from the comparison below.
+
+### Matched raw-data 50%-channel comparison
+
+Six seed-0 runs completed on the RTX 4050 with raw DEAP BDF and raw SEED-IV
+MATLAB sources, participant-held-out splits, canonical electrode masks, 25
+evenly sampled 100-sample windows per participant, 50% channel training
+dropout, batch size 32, 20 tau-optimization epochs, 10 Euler steps, 50-epoch
+cap, and patience 8. The runner estimates each source graph from its training
+windows; joint runs average the source graphs. Fixed test groups are DEAP
+03/05/11/12/22/26 and SEED-IV 7/10/15. No tau floor was applied.
+
+| Training | Model | Source | PCC | NMSE | PSNR | SNR | tau_s | tau_t | Best epoch |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Joint | GiFlow | DEAP-RAW | 0.6261 | 0.5920 | 26.08 | 2.28 | 0.0194 | 0.0381 | 2 |
+| Joint | GiFlow | SEED-IV-MAT | 0.6313 | 0.6333 | 31.90 | 1.98 | 0.0194 | 0.0381 | 2 |
+| Joint | SRG-flow | DEAP-RAW | 0.6219 | 0.5979 | 26.04 | 2.23 | 0.0193 | 0.0469 | 2 |
+| Joint | SRG-flow | SEED-IV-MAT | 0.6248 | 0.6416 | 31.84 | 1.93 | 0.0193 | 0.0469 | 2 |
+| Individual | GiFlow | DEAP-RAW | 0.5942 | 0.6325 | 25.79 | 1.99 | 2.5104 | 0.0528 | 40 |
+| Individual | SRG-flow | DEAP-RAW | 0.4247 | 0.8456 | 24.53 | 0.73 | 2.5685 | 0.0543 | 2 |
+| Individual | GiFlow | SEED-IV-MAT | 0.5351 | 0.7571 | 31.13 | 1.21 | 0.0476 | 0.0882 | 2 |
+| Individual | SRG-flow | SEED-IV-MAT | 0.5409 | 0.7216 | 31.33 | 1.42 | 0.0466 | 0.0792 | 3 |
+
+The joint KNN baseline scored PCC 0.6258 / NMSE 0.5931 on DEAP and
+0.6258 / 0.6113 on SEED-IV (pooled NMSE 0.6022). Individual-graph KNN NMSEs
+were 0.5964 on DEAP and 0.6097 on SEED-IV. Joint training lowered model NMSE
+relative to individual training on both sources for both architectures in this
+single split. This is preliminary: the joint graph also differs from the
+source-specific individual graph, so the observed gap is not attributable to
+training samples alone. Joint GiFlow pooled NMSE 0.6127 and SRG-flow 0.6198
+both trail joint KNN. One seed is not enough for a performance claim.
+
+Exact run artifacts:
+
+- `runs/study_subject_matchedraw_joint_giflow_channel50_seed0/`
+- `runs/study_subject_matchedraw_joint_srgflow_channel50_seed0/`
+- `runs/study_subject_matchedraw_deap_giflow_channel50_seed0/`
+- `runs/study_subject_matchedraw_deap_srgflow_channel50_seed0/`
+- `runs/study_subject_matchedraw_seed4_giflow_channel50_seed0/`
+- `runs/study_subject_matchedraw_seed4_srgflow_channel50_seed0/`
+
+Baseline-matched figures are `paper/figures/joint_subject_channel50.png`,
+`paper/figures/deap_individual_subject_channel50.png`, and
+`paper/figures/seed4_individual_subject_channel50.png`.
+
+The `incomplete_wrong_root_*` folders contain partial diagnostics from an
+incorrect default SEED root and are not part of these results. Pass
+`--seed-root data/seed4/eeg_raw_data` explicitly when the parent folder also
+contains processed recordings.

@@ -123,6 +123,7 @@ class GraphInformedPrior(nn.Module):
         renormalize: bool = False,
         max_tau: float | None = 10.0,
         min_tau_s: float = 0.0,
+        min_tau_t: float = 0.0,
     ):
         super().__init__()
         self.kernel_s = HeatKernel(lap_s, mode=mode, order=order)
@@ -132,13 +133,18 @@ class GraphInformedPrior(nn.Module):
         self.renormalize = renormalize
         self.max_tau = max_tau
         self.min_tau_s = float(min_tau_s)
-        if self.min_tau_s < 0 or (max_tau is not None and self.min_tau_s >= max_tau):
-            raise ValueError("min_tau_s must be non-negative and below max_tau")
+        self.min_tau_t = float(min_tau_t)
+        if self.min_tau_s < 0 or self.min_tau_t < 0:
+            raise ValueError("minimum filtering factors must be non-negative")
+        if max_tau is not None and (
+            self.min_tau_s >= max_tau or self.min_tau_t >= max_tau
+        ):
+            raise ValueError("minimum filtering factors must be below max_tau")
         self.raw_tau_s = nn.Parameter(
             torch.tensor(self._to_raw(tau_s, self.min_tau_s)), requires_grad=learn_spatial
         )
         self.raw_tau_t = nn.Parameter(
-            torch.tensor(self._to_raw(tau_t)), requires_grad=learn_temporal
+            torch.tensor(self._to_raw(tau_t, self.min_tau_t)), requires_grad=learn_temporal
         )
         self.register_buffer(
             "lap_s_dense", torch.as_tensor(np.asarray(lap_s), dtype=torch.float32)
@@ -170,7 +176,7 @@ class GraphInformedPrior(nn.Module):
     def tau_t(self) -> torch.Tensor:
         if not self.learn_temporal:
             return torch.zeros((), device=self.raw_tau_t.device)
-        return self._from_raw(self.raw_tau_t)
+        return self._from_raw(self.raw_tau_t, self.min_tau_t)
 
     def forward(self, x_obs: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         """x_obs: (B, N, R), already multiplied by the conditioning mask."""

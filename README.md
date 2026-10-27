@@ -156,8 +156,10 @@ pooled PCC, `NMSE = sum((prediction - target)^2) / sum(target^2)`, and
 scored reference values. The paper reports SNR rather than PSNR, so the runner
 also reports `SNR = 10 log10(sum(target^2) / sum(error^2))`. MAE/RMSE/MAPE are
 retained for continuity with earlier runs. Validation checkpoints now minimize
-NMSE. In joint runs, each metric is computed per dataset and then macro-averaged
-so a longer recording does not dominate the aggregate. EEG-FID, frequency-domain/topomap errors, and downstream classification
+NMSE. Joint runs report per-dataset pooled values and their macro-average; when
+participant IDs are available, `history.json` also contains per-participant
+metrics and mean/std summaries within each dataset. Prefer those participant
+summaries for subject-held-out paper tables. EEG-FID, frequency-domain/topomap errors, and downstream classification
 are not computed: those require an EEGNet feature model, electrode-coordinate
 interpolation, and task-specific labels/protocols that are not part of this
 imputation training pipeline.
@@ -175,13 +177,30 @@ are never silently treated as the same electrode. Joint training samples each
 dataset with equal probability. The graph prior automatically
 renormalizes its masked filtering when a source has padded channels, preventing
 those absent nodes from acting like observed zero-valued electrodes.
+Evaluation masks use canonical channel-name ordering when channel metadata is
+available, so a fixed seed produces the same per-electrode mask after channel
+reordering or union padding. This is required for controlled joint-versus-
+individual comparisons.
 
-MATLAB files with a 62-channel `cz_eeg1` array are supported directly, and
-window generation respects file boundaries. Other channel counts require
-explicit channel-name metadata; positional guessing is rejected. For different
-sampling rates or incompatible timestamp features, preprocess/resample first
-and use compatible timestamp fields before joint training. `--max-recordings`
-and `--max-windows` are available for bounded smoke runs.
+SEED-IV MATLAB files with 62-channel trial arrays (including subject-prefixed
+variables such as `tyc_eeg1`, `cz_eeg1`, and `mz_eeg1`) are supported; trial
+and file boundaries are preserved. `--max-windows-per-subject` samples windows evenly across a
+participant's recordings without retaining all MATLAB arrays in memory.
+Participant IDs are read from filenames such as `10_20151014.mat`, enabling
+the fixed held-out SEED-IV subjects used by `--split-mode subject`. For
+different sampling rates or incompatible timestamp features, preprocess/
+resample first and use compatible timestamp fields before joint training.
+`--max-recordings`, `--max-windows-per-subject`, and `--max-windows` support
+bounded runs.
+
+Use `--split-mode subject` for participant-disjoint test sets or
+`--split-mode window` for the separate within-dataset sequential-window
+evaluation. These protocols are reported separately; window-level results
+must not be described as participant-independent generalization. The runner
+supports point, block, shared-stream outage, and whole-channel masks
+(`--missing point|block|stream|channel`), plus spatial and temporal `tau`
+floors (`--min-tau-s`, `--min-tau-t`). The temporal floor is an experimental
+control, not a selected optimum until a validation sweep is complete.
 
 ## Layout
 
@@ -226,6 +245,12 @@ python scripts/run.py --dataset seed4 --missing channel --rho 0.5 \
   --train-channel-drop-prob 0.5 --min-tau-s 0.25 \
   --clamp-observed-each-step
 
+# joint raw DEAP + raw SEED-IV; set the MATLAB root explicitly when
+# data/seed4 also contains processed/packed recordings
+python scripts/run.py --datasets deap seed4 --seed-root data/seed4/eeg_raw_data \
+  --split-mode subject --missing channel --rho 0.5 \
+  --max-windows-per-subject 25 --device cuda
+
 # ablations (Tables 4 and 5)
 python scripts/run.py --variant fm_gauss          # Gaussian prior
 python scripts/run.py --variant srg_flow          # SRGDiff-inspired residual-guided flow
@@ -241,6 +266,18 @@ python scripts/run.py --datasets seed4 seed4 \
   --seed-roots data/seed4/eeg_raw_reconstructed_l2/1 data/seed4/eeg_raw_reconstructed_l2/2 \
   --max-recordings 100 --window 100 --stride 100 --missing channel --rho 0.5 \
   --variant srg_flow --device cuda --out runs/seed4_joint_srg
+
+# raw joint DEAP-RAW + SEED-IV; held-out participants, bounded GPU pilot
+python scripts/run.py --datasets deap seed4 \
+  --seed-root data/seed4/eeg_raw_data --split-mode subject \
+  --max-windows-per-subject 200 --max-windows 4000 \
+  --window 100 --stride 100 --missing channel --rho 0.5 \
+  --device cuda --out runs/deap_seed4_subject_channel50_giflow
+
+# plot dataset-specific NMSE/PCC for matched model runs and their baselines
+python scripts/plot_comparison.py \
+  --run-dirs runs/deap_seed4_subject_channel50_giflow \
+  --out paper/figures/channel50_comparison.png
 
 # correctness tests, and a timing benchmark for your machine
 python tests/test_giflow.py

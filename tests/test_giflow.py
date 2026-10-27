@@ -154,6 +154,13 @@ def test_prior():
           "tau_s=%.4f" % float(pb.tau_s.detach()))
     ps = GraphInformedPrior(g["lap_s"], g["lap_t"], 1.0, 1.0, max_tau=2.0, min_tau_s=0.5)
     check("minimum spatial filtering is enforced", float(ps.tau_s.detach()) >= 0.5)
+    pt = GraphInformedPrior(
+        g["lap_s"], g["lap_t"], 1.0, 1.0, max_tau=2.0, min_tau_t=0.4
+    )
+    check("minimum temporal filtering is enforced", float(pt.tau_t.detach()) >= 0.4)
+    with torch.no_grad():
+        pt.raw_tau_t.fill_(-50.0)
+    check("temporal optimization cannot cross its floor", float(pt.tau_t.detach()) >= 0.4)
 
 
 def test_vector_field_and_flow():
@@ -225,6 +232,16 @@ def test_masking_and_metrics():
     ev = make_eval_mask(obs, "channel", 0.5, seed=0)
     check("channel missing removes half the electrodes",
           ev.sum() == 10 * 200 and np.all((ev.sum(axis=1) == 0) | (ev.sum(axis=1) == 200)))
+    ev = make_eval_mask(obs, "stream", 0.3, seed=0)
+    check("stream missing hits the target rate", abs(ev.mean() - 0.3) < 1e-6,
+          "%.4f" % ev.mean())
+    check("stream missing removes shared time intervals",
+          bool(np.mean((ev.sum(axis=0) == 0) | (ev.sum(axis=0) == 20)) > 0.95))
+    partially_present = obs.copy()
+    partially_present[-10:] = 0
+    ev = make_eval_mask(partially_present, "channel", 0.5, seed=0)
+    check("channel missing selects only present electrodes",
+          ev.sum() == 5 * 200 and np.all(ev[-10:] == 0))
 
     # partially observed input: eval mask must never exceed availability
     obs2 = (np.random.default_rng(0).random((20, 200)) > 0.3).astype(float)
