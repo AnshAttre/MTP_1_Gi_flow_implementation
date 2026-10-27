@@ -22,6 +22,7 @@ from .graph import (
     line_graph_adjacency,
 )
 from .synthetic import generate_synthetic
+from .token_masks import channel_positions
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -37,6 +38,7 @@ class DatasetBundle:
     def __init__(
         self, name, x, observed_mask, adj_s, timestamps=None, ts_classes=(),
         channel_names=None, segments=None, node_presence=None, segment_group_ids=None,
+        channel_positions=None,
     ):
         self.name = name
         self.x = np.asarray(x, dtype=np.float32)          # (N, R_total)
@@ -63,6 +65,18 @@ class DatasetBundle:
             np.ones(self.x.shape[0]) if node_presence is None else node_presence,
             dtype=np.float64,
         )
+        if channel_positions is None:
+            try:
+                channel_positions = globals()["channel_positions"](self.channel_names)
+            except (ValueError, KeyError, TypeError):
+                channel_positions = None
+        self.channel_positions = None if channel_positions is None else np.asarray(
+            channel_positions, dtype=np.float64
+        )
+        if self.channel_positions is not None and self.channel_positions.shape != (
+            self.x.shape[0], 3
+        ):
+            raise ValueError("channel_positions must have shape (channels, 3)")
         if len(self.channel_names) != self.x.shape[0]:
             raise ValueError("channel_names must contain one name per node")
         if self.node_presence.shape != (self.x.shape[0],):
@@ -119,10 +133,15 @@ def align_bundles(bundles: list[DatasetBundle]):
         present[indices] = 1.0
         edge_sum += adj
         edge_count += np.outer(present, present)
+        aligned_positions = None
+        if bundle.channel_positions is not None:
+            aligned_positions = np.zeros((len(channel_names), 3), dtype=np.float64)
+            aligned_positions[indices] = bundle.channel_positions
         aligned.append(DatasetBundle(
             bundle.name, x, mask, adj, bundle.timestamps, bundle.ts_classes,
             channel_names=channel_names, segments=bundle.segments,
             node_presence=present, segment_group_ids=bundle.segment_group_ids,
+            channel_positions=aligned_positions,
         ))
 
     combined_adj = np.divide(edge_sum, edge_count, out=np.zeros_like(edge_sum), where=edge_count > 0)

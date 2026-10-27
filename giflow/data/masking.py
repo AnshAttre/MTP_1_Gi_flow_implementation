@@ -146,6 +146,49 @@ def _make_eval_mask(observed_mask, strategy, rho, rng, kw):
     raise ValueError(f"unknown missing strategy: {strategy!r}")
 
 
+def random_token_subset_mask(
+    mask,
+    patch_size,
+    rho_range=(0.1, 0.9),
+    channel_drop_prob=0.0,
+    generator=None,
+):
+    """Sample mixed point-token and whole-channel targets for channel-window patches."""
+    import torch
+
+    b, channels, samples = mask.shape
+    if samples % patch_size:
+        raise ValueError("window length must be divisible by patch_size")
+    patches = samples // patch_size
+    patch_observed = mask.reshape(b, channels, patches, patch_size).any(dim=-1)
+    rng = torch.rand(b, device=mask.device, generator=generator)
+    rho = rng.new_empty(b).uniform_(*rho_range)
+    cond = patch_observed.clone().float()
+    target = torch.zeros_like(cond)
+
+    for batch_index in range(b):
+        available = torch.nonzero(cond[batch_index], as_tuple=False)
+        if not available.numel():
+            continue
+        channels_available = torch.unique(available[:, 0])
+        if torch.rand((), device=mask.device, generator=generator).item() < channel_drop_prob:
+            n_drop = torch.randint(0, len(channels_available) + 1, (), device=mask.device, generator=generator).item()
+            if n_drop:
+                order = torch.randperm(len(channels_available), device=mask.device, generator=generator)[:n_drop]
+                selected_channels = channels_available[order]
+                target[batch_index, selected_channels] = cond[batch_index, selected_channels]
+
+        candidates = torch.nonzero(cond[batch_index] * (1 - target[batch_index]), as_tuple=False)
+        n_targets = min(len(candidates), int(round(float(rho[batch_index]) * len(candidates))))
+        if n_targets:
+            selected = torch.randperm(len(candidates), device=mask.device, generator=generator)[:n_targets]
+            target[batch_index][tuple(candidates[selected].T)] = 1.0
+
+    flat_target = target.permute(0, 2, 1).unsqueeze(-1).expand(-1, patches, channels, patch_size)
+    flat_target = flat_target.permute(0, 2, 1, 3).reshape(b, channels, samples)
+    return flat_target
+
+
 def random_subset_mask(
     mask, keep_ratio_range=(0.3, 0.9), channel_drop_prob=0.0, generator=None
 ):

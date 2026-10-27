@@ -44,6 +44,7 @@ class SpatioTemporalWindows(Dataset):
         dataset_id: int = 0,
         node_presence: np.ndarray | None = None,
         group_ids: np.ndarray | None = None,
+        channel_positions: np.ndarray | None = None,
     ):
         self.x = np.asarray(x, dtype=np.float32)
         self.observed_mask = np.asarray(observed_mask, dtype=np.float32)
@@ -60,6 +61,13 @@ class SpatioTemporalWindows(Dataset):
         self.group_ids = None if group_ids is None else np.asarray(group_ids, dtype=object)
         if self.group_ids is not None and self.group_ids.shape != self.indices.shape:
             raise ValueError("group_ids must contain one identifier per window")
+        self.channel_positions = None if channel_positions is None else np.asarray(
+            channel_positions, dtype=np.float32
+        )
+        if self.channel_positions is not None and self.channel_positions.shape != (
+            self.x.shape[0], 3
+        ):
+            raise ValueError("channel_positions must have shape (channels, 3)")
         if self.node_presence.shape != (self.x.shape[0],):
             raise ValueError("node_presence must contain one value per node")
 
@@ -87,6 +95,8 @@ class SpatioTemporalWindows(Dataset):
         }
         if self.timestamps is not None:
             item["timestamps"] = torch.from_numpy(self.timestamps[sl].copy())
+        if self.channel_positions is not None:
+            item["channel_positions"] = torch.from_numpy(self.channel_positions.copy())
         if self.group_ids is not None:
             item["group_id"] = str(self.group_ids[i])
         return item
@@ -108,6 +118,7 @@ def build_splits(
     node_presence: np.ndarray | None = None,
     segment_group_ids: tuple[str, ...] | None = None,
     channel_ids: tuple[str, ...] | None = None,
+    channel_positions: np.ndarray | None = None,
     split_mode: str = "window",
     split_seed: int = 0,
     test_groups: tuple[str, ...] | None = None,
@@ -276,7 +287,7 @@ def build_splits(
 
     common = dict(
         window=window, scaler=scaler, timestamps=timestamps, dataset_id=dataset_id,
-        node_presence=node_presence,
+        node_presence=node_presence, channel_positions=channel_positions,
     )
     if start_groups is None:
         train_groups = validation_groups = test_window_groups = None

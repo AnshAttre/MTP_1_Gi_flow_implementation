@@ -39,6 +39,7 @@ VARIANTS = {
     "no_st_attn": {"use_spatial_attention": False, "use_temporal_attention": False},
     "no_propagation": {"use_propagation": False},
     "srg_flow": {"use_srg_guidance": True},
+    "channel-token": {"architecture": "channel-token"},
 }
 
 
@@ -88,6 +89,8 @@ def parse_args(argv=None):
     p.add_argument("--alpha-tau", type=float, default=0.01)
     p.add_argument("--tau-epochs", type=int, default=100)
     p.add_argument("--euler-steps", type=int, default=20)
+    p.add_argument("--architecture", choices=["giflow", "channel-token"], default=None)
+    p.add_argument("--token-patch-size", type=int, default=10)
     p.add_argument("--preservation-weight", type=float, default=0.1,
                    help="weight of the loss preserving conditioned values")
     p.add_argument("--srg-lambda-res", type=float, default=1.0,
@@ -98,6 +101,8 @@ def parse_args(argv=None):
                    help="restore conditioned values after every Euler update")
     p.add_argument("--train-channel-drop-prob", type=float, default=0.0,
                    help="probability of hiding each electrode during training")
+    p.add_argument("--train-token-rho-min", type=float, default=0.1)
+    p.add_argument("--train-token-rho-max", type=float, default=0.9)
     p.add_argument("--prior-mode", default="exact", choices=["exact", "taylor"])
     p.add_argument("--prior-renormalize", action="store_true")
     p.add_argument("--max-tau", type=float, default=10.0,
@@ -177,6 +182,7 @@ def build(args, seed):
             dataset_id=dataset_id,
             node_presence=bundle.node_presence,
             channel_ids=bundle.channel_names,
+            channel_positions=bundle.channel_positions,
             segment_group_ids=bundle.segment_group_ids,
             split_mode=args.split_mode,
             split_seed=args.split_seed,
@@ -300,6 +306,9 @@ def main(argv=None):
             srg_lambda_smm=args.srg_lambda_smm,
             clamp_observed_each_step=args.clamp_observed_each_step,
             train_channel_drop_prob=args.train_channel_drop_prob,
+            train_token_rho_range=(args.train_token_rho_min, args.train_token_rho_max),
+            architecture=(args.architecture or VARIANTS[args.variant].get("architecture", "giflow")),
+            token_patch_size=args.token_patch_size,
             tau_epochs=args.tau_epochs,
             prior_mode=args.prior_mode,
             prior_renormalize=(

@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from .data.dataset import make_loaders
-from .data.masking import random_subset_mask
+from .data.masking import random_subset_mask, random_token_subset_mask
 from .metrics import MetricAccumulator
 from .models.giflow import EMA, GiFlow
 from .models.prior import optimize_filtering_factors
@@ -63,10 +63,13 @@ class TrainConfig:
     use_propagation: bool = True
     use_srg_guidance: bool = False
     srg_lambda_res: float = 1.0
+    architecture: str = "giflow"
+    token_patch_size: int = 10
     srg_lambda_smm: float = 0.01
     # training-time extra masking so the model predicts instead of copying
     train_keep_range: tuple = (0.3, 0.9)
     train_channel_drop_prob: float = 0.0
+    train_token_rho_range: tuple = (0.1, 0.9)
     # misc
     seed: int = 0
     device: str = "cpu"
@@ -108,10 +111,19 @@ def evaluate(model, loader, scaler, cfg: TrainConfig, device: str, dataset_names
         cond = batch["cond_mask"].to(device)
         ev = batch["eval_mask"].to(device)
         node_mask = batch["node_mask"].to(device)
-        pred = model.impute(
-            x_true, cond, n_steps=cfg.euler_steps,
-            timestamps=_timestamps(batch, device), node_mask=node_mask,
-        )
+        positions = batch.get("channel_positions")
+        positions = None if positions is None else positions.to(device)
+        if cfg.architecture == "channel-token":
+            pred = model.impute(
+                x_true, cond, n_steps=cfg.euler_steps,
+                timestamps=_timestamps(batch, device), node_mask=node_mask,
+                positions=positions,
+            )
+        else:
+            pred = model.impute(
+                x_true, cond, n_steps=cfg.euler_steps,
+                timestamps=_timestamps(batch, device), node_mask=node_mask,
+            )
         group_ids = batch.get("group_id")
         if not joint:
             pred_original = scaler.inverse_transform(pred)
@@ -211,7 +223,17 @@ def fit(
         train_ds, val_ds, test_ds, cfg.batch_size, cfg.num_workers
     )
 
-    model = GiFlow(
+    if cfg.architecture == "channel-token":
+        from .models.channel_token import ChannelTokenFlow
+        model = ChannelTokenFlow(
+            patch_size=cfg.token_patch_size,
+            hidden=cfg.hidden,
+            layers=cfg.n_mp_layers,
+            heads=max(1, cfg.emb_dim // 8),
+            dropout=cfg.dropout,
+        )
+    else:
+        model = GiFlow(
         adj_s=adj_s,
         lap_s=lap_s,
         lap_t=lap_t,
@@ -244,7 +266,7 @@ def fit(
         use_srg_guidance=cfg.use_srg_guidance,
         srg_lambda_res=cfg.srg_lambda_res,
         srg_lambda_smm=cfg.srg_lambda_smm,
-    ).to(device)
+        ).to(device)
 
     history = {
         "tau": None, "epochs": [], "config": asdict(cfg),
@@ -252,7 +274,7 @@ def fit(
     }
 
     # ---------------------------------------------------------- Stage 1: tau
-    if not cfg.gaussian_prior:
+    if cfg.architecture != "channel-token" and not cfg.gaussian_prior:
         tau_loader, _, _ = make_loaders(
             train_ds, val_ds, test_ds, cfg.tau_batch_size, cfg.num_workers
         )
@@ -276,22 +298,25 @@ def fit(
                 % (tau_res["seconds"], tau_res["tau_s"], tau_res["tau_t"])
             )
     # freeze the factors for training and inference
-    for p in model.prior.parameters():
-        p.requires_grad_(False)
+    if cfg.architecture != "channel-token":
+        for p in model.prior.parameters():
+            p.requires_grad_(False)
 
     # ------------------------------------------- transport cost (Theorem 3.2)
-    with torch.no_grad():
-        tc, ntc = 0.0, 0
-        for batch in val_loader:
-            xt = batch["x_true"].to(device)
-            cm = batch["cond_mask"].to(device)
-            node_mask = batch["node_mask"].to(device)
-            x0 = model.source_sample(xt * cm, cm, node_mask)
-            tc += float(model.prior.transport_cost(xt, x0).detach())
-            ntc += 1
-        history["transport_cost"] = tc / max(ntc, 1)
+    if cfg.architecture != "channel-token":
+        with torch.no_grad():
+            tc, ntc = 0.0, 0
+            for batch in val_loader:
+                xt = batch["x_true"].to(device)
+                cm = batch["cond_mask"].to(device)
+                node_mask = batch["node_mask"].to(device)
+                x0 = model.source_sample(xt * cm, cm, node_mask)
+                tc += float(model.prior.transport_cost(xt, x0).detach())
+                ntc += 1
+            history["transport_cost"] = tc / max(ntc, 1)
+        if verbose:
+            print("[info] transport cost E||X_1 - X_0||^2 = %.2f" % history["transport_cost"])
     if verbose:
-        print("[info] transport cost E||X_1 - X_0||^2 = %.2f" % history["transport_cost"])
         print("[info] trainable params: %d" % count_params(model))
 
     # ------------------------------------------------------- Stage 2: flow FM
@@ -314,25 +339,40 @@ def fit(
             obs = batch["observed_mask"].to(device)
             cond_full = batch["cond_mask"].to(device)
             node_mask = batch["node_mask"].to(device)
-            # hide a random subset of the visible entries; score on what we hid
-            cond = random_subset_mask(
-                cond_full,
-                cfg.train_keep_range,
-                channel_drop_prob=cfg.train_channel_drop_prob,
-                generator=gen,
-            )
-            target = cond_full - cond
+            # Hide random entries; channel-token training uses patch-level targets.
+            if cfg.architecture == "channel-token":
+                target = random_token_subset_mask(
+                    cond_full,
+                    cfg.token_patch_size,
+                    rho_range=cfg.train_token_rho_range,
+                    channel_drop_prob=cfg.train_channel_drop_prob,
+                    generator=gen,
+                )
+                cond = cond_full - target
+            else:
+                cond = random_subset_mask(
+                    cond_full,
+                    cfg.train_keep_range,
+                    channel_drop_prob=cfg.train_channel_drop_prob,
+                    generator=gen,
+                )
+                target = cond_full - cond
             if float(target.sum()) == 0:
                 target = cond_full
-            loss, components = model.loss(
-                x_true,
-                cond,
-                target,
-                _timestamps(batch, device),
-                preservation_weight=cfg.preservation_weight,
-                return_components=True,
-                node_mask=node_mask,
-            )
+            positions = batch.get("channel_positions")
+            positions = None if positions is None else positions.to(device)
+            if cfg.architecture == "channel-token":
+                loss, components = model.loss(
+                    x_true, cond, target, positions=positions,
+                    node_mask=node_mask, return_components=True,
+                )
+            else:
+                loss, components = model.loss(
+                    x_true, cond, target,
+                    _timestamps(batch, device),
+                    preservation_weight=cfg.preservation_weight,
+                    return_components=True, node_mask=node_mask,
+                )
             opt.zero_grad(set_to_none=True)
             loss.backward()
             if cfg.grad_clip:
