@@ -70,6 +70,10 @@ class SpatioTemporalWindows(Dataset):
             raise ValueError("channel_positions must have shape (channels, 3)")
         if self.node_presence.shape != (self.x.shape[0],):
             raise ValueError("node_presence must contain one value per node")
+        # When True, the evaluation-hidden entries are visible as conditioning
+        # and as training targets; x_obs/mask still apply the eval mask so the
+        # tau fit (Problem 5) keeps its imputation objective.
+        self.reveal_eval = False
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -82,11 +86,15 @@ class SpatioTemporalWindows(Dataset):
         cond = obs * (1.0 - ev)
         # normalise, then zero out anything not genuinely observed
         x = self.scaler.transform(self.x[:, sl]) * obs
+        if self.reveal_eval:
+            visible, scored = obs, np.zeros_like(ev)
+        else:
+            visible, scored = cond, ev
         item = {
             "x_true": torch.from_numpy(x.copy()),
             "observed_mask": torch.from_numpy(obs.copy()),
-            "eval_mask": torch.from_numpy(ev.copy()),
-            "cond_mask": torch.from_numpy(cond.copy()),
+            "eval_mask": torch.from_numpy(scored.copy()),
+            "cond_mask": torch.from_numpy(visible.copy()),
             # for the tau optimisation loader interface
             "x_obs": torch.from_numpy((x * cond).copy()),
             "mask": torch.from_numpy(cond.copy()),
@@ -323,6 +331,16 @@ def build_splits(
     if split_groups is not None:
         info["subject_groups"] = split_groups
     return train_ds, val_ds, test_ds, scaler, info
+
+
+def reveal_eval_in_training(train_ds) -> None:
+    """Let training windows see (and be trained on) the eval-hidden entries.
+
+    Validation and test windows keep the eval mask, so scoring is unchanged;
+    only the model's training signal now covers the evaluation electrodes.
+    """
+    for ds in getattr(train_ds, "datasets", [train_ds]):
+        ds.reveal_eval = True
 
 
 def make_loaders(train_ds, val_ds, test_ds, batch_size: int = 32, num_workers: int = 0):

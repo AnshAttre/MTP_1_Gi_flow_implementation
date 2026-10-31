@@ -50,6 +50,7 @@ class TrainConfig:
     prior_mode: str = "exact"
     prior_order: int = 10
     prior_renormalize: bool = False
+    prior_source: str = "heat"            # "fp": feature-propagation source
     max_tau: float | None = 10.0
     min_tau_s: float = 0.0
     min_tau_t: float = 0.0
@@ -251,6 +252,7 @@ def fit(
         learn_spatial_prior=cfg.learn_spatial_prior,
         learn_temporal_prior=cfg.learn_temporal_prior,
         prior_renormalize=cfg.prior_renormalize,
+        prior_source=cfg.prior_source,
         max_tau=cfg.max_tau,
         min_tau_s=cfg.min_tau_s,
         min_tau_t=cfg.min_tau_t,

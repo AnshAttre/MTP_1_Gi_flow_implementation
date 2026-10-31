@@ -306,6 +306,41 @@ def test_splits_and_ema():
           "delta %.4f" % float((after - before).abs().max()))
 
 
+def test_training_signal_and_fp_source():
+    print("\n[reveal-eval training / FP source]")
+    from giflow.baselines import feature_propagation
+    from giflow.data.dataset import reveal_eval_in_training
+
+    b = load_synthetic(n_nodes=15, n_steps=300, seed=0)
+    tr, va, te, sc, info = build_splits(
+        b.x, b.observed_mask, window=24, missing_strategy="channel", rho=0.5, seed=0
+    )
+    before = tr[0]
+    reveal_eval_in_training(tr)
+    after, val_item = tr[0], va[0]
+    check("reveal-eval makes eval electrodes visible in training",
+          torch.equal(after["cond_mask"], after["observed_mask"])
+          and float(before["eval_mask"].sum()) > 0)
+    check("reveal-eval keeps the tau-fit mask unchanged",
+          torch.equal(after["mask"], before["mask"]))
+    check("validation windows keep the eval mask",
+          float(val_item["eval_mask"].sum()) > 0
+          and not torch.equal(val_item["cond_mask"], val_item["observed_mask"]))
+
+    g = graphs(15, 24)
+    model = GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, prior_source="fp", **g)
+    x = val_item["x_true"][None]
+    cond = val_item["cond_mask"][None]
+    src = model.source_sample(x * cond, cond)
+    ref = feature_propagation(x[0].numpy(), cond[0].numpy(), g["adj_s_norm"])
+    check("FP source matches the FP baseline",
+          np.allclose(src[0].numpy(), ref, atol=1e-4))
+    check("FP source keeps visible entries", torch.allclose(src * cond, x * cond))
+    keys = set(GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, **g).state_dict())
+    check("FP operator is not saved, so old checkpoints still load",
+          "fp_adj" not in keys)
+
+
 if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
@@ -314,6 +349,7 @@ if __name__ == "__main__":
     test_vector_field_and_flow()
     test_masking_and_metrics()
     test_splits_and_ema()
+    test_training_signal_and_fp_source()
     print("\n" + "=" * 60)
     print("%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:

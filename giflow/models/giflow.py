@@ -137,9 +137,20 @@ class GiFlow(nn.Module):
         use_srg_guidance: bool = False,
         srg_lambda_res: float = 1.0,
         srg_lambda_smm: float = 0.01,
+        prior_source: str = "heat",
+        fp_iterations: int = 40,
     ):
         super().__init__()
+        if prior_source not in ("heat", "fp"):
+            raise ValueError("prior_source must be 'heat' or 'fp'")
         self.gaussian_prior = gaussian_prior
+        self.prior_source = prior_source
+        self.fp_iterations = fp_iterations
+        # feature propagation (Rossi et al., 2022) operator for the "fp" source
+        self.register_buffer(
+            "fp_adj", torch.as_tensor(np.asarray(adj_s_norm), dtype=torch.float32),
+            persistent=False,
+        )
         self.prior = GraphInformedPrior(
             lap_s,
             lap_t,
@@ -196,9 +207,23 @@ class GiFlow(nn.Module):
         """X_0. Either the graph-informed prior (Eq. 4) or the FM-Gauss baseline."""
         if self.gaussian_prior:
             source = torch.randn_like(x_cond)
+        elif self.prior_source == "fp":
+            source = self.feature_propagation(x_cond, cond_mask)
         else:
             source = self.prior(x_cond, cond_mask)
         return source if node_mask is None else source * node_mask[:, :, None]
+
+    def feature_propagation(self, x_cond: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
+        """FP source: iterate X <- S X over electrodes, resetting visible entries.
+
+        Matches the FP baseline, so the flow only has to learn a correction to
+        the strongest non-learned estimate (lower transport cost, Thm. 3.2).
+        """
+        out = x_cond
+        for _ in range(self.fp_iterations):
+            out = torch.einsum("ij,bjr->bir", self.fp_adj, out)
+            out = cond_mask * x_cond + (1.0 - cond_mask) * out
+        return out
 
     # --------------------------------------------------------------- training
     def loss(

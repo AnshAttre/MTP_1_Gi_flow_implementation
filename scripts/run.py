@@ -22,7 +22,7 @@ from torch.utils.data import ConcatDataset
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from giflow.baselines import run_baselines
-from giflow.data.dataset import build_splits, make_loaders
+from giflow.data.dataset import build_splits, make_loaders, reveal_eval_in_training
 from giflow.data.datasets import align_bundles, load_dataset
 from giflow.data.graph import gcn_normalize, laplacian
 from giflow.data.seed_iv import _correlation_adjacency
@@ -109,6 +109,11 @@ def parse_args(argv=None):
                         "training; 1 1 keeps all points (pair with channel drop)")
     p.add_argument("--prior-mode", default="exact", choices=["exact", "taylor"])
     p.add_argument("--prior-renormalize", action="store_true")
+    p.add_argument("--prior-source", default="heat", choices=["heat", "fp"],
+                   help="flow source X_0: heat-kernel prior (paper) or feature propagation")
+    p.add_argument("--train-reveal-eval", action="store_true",
+                   help="train on the eval-hidden entries of training windows; "
+                        "validation and test keep the eval mask")
     p.add_argument("--max-tau", type=float, default=10.0,
                    help="upper bound on the filtering factors; 0 disables the bound")
     p.add_argument("--min-tau-s", type=float, default=0.0,
@@ -281,7 +286,7 @@ def main(argv=None):
                       % (item["name"], item["n_windows"], item["split_sizes"], item["eval_rate"]))
         print("[data] split mode=%s" % args.split_mode)
 
-        if i == 0 and not args.skip_baselines:
+        if not args.skip_baselines:
             _, _, test_loader = make_loaders(*splits, batch_size=args.batch_size)
             t0 = time.time()
             base = run_baselines(
@@ -292,7 +297,11 @@ def main(argv=None):
             for k, v in base.items():
                 print("   %-8s PCC %7.4f  NMSE %8.4f  PSNR %7.2f dB  SNR %7.2f dB"
                       % (k, v["pcc"], v["nmse"], v["psnr"], v["snr"]))
-            (out_root / "baselines.json").write_text(json.dumps(base, indent=2))
+            # each seed hides different channels, so score baselines per seed
+            name = "baselines.json" if i == 0 else "baselines_seed%d.json" % seed
+            (out_root / name).write_text(json.dumps(base, indent=2))
+        if args.train_reveal_eval:
+            reveal_eval_in_training(splits[0])
 
         cfg = TrainConfig(
             lr=args.lr,
@@ -316,6 +325,7 @@ def main(argv=None):
             train_keep_range=tuple(args.train_keep_range),
             tau_epochs=args.tau_epochs,
             prior_mode=args.prior_mode,
+            prior_source=args.prior_source,
             prior_renormalize=(
                 args.prior_renormalize
                 or any(not item.node_presence.all() for item in bundles)
