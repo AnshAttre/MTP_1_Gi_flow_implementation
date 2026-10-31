@@ -10,6 +10,7 @@ Examples
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 import time
@@ -27,7 +28,7 @@ from giflow.data.datasets import align_bundles, load_dataset
 from giflow.data.graph import gcn_normalize, laplacian
 from giflow.data.seed_iv import _correlation_adjacency
 from giflow.metrics import aggregate_trials
-from giflow.train import TrainConfig, fit
+from giflow.train import TrainConfig, fit, score_ensemble
 
 VARIANTS = {
     "giflow": {},
@@ -118,6 +119,12 @@ def parse_args(argv=None):
                         "or a per-electrode mixture of heat/FP/KNN fit by transport cost")
     p.add_argument("--blend-fp", action="store_true",
                    help="also score w*GiFlow + (1-w)*FP, with w fit on validation")
+    p.add_argument("--ensemble", type=int, default=1,
+                   help="train this many models per seed (different initialisation, "
+                        "same masks) and also score their mean")
+    p.add_argument("--tta-steps", type=int, default=0,
+                   help="per-participant test-time adaptation on visible electrodes")
+    p.add_argument("--tta-lr", type=float, default=1e-4)
     p.add_argument("--blend-with", default="fp", choices=["fp", "source"],
                    help="what --blend-fp mixes the flow output with: FP or the flow source X_0")
     p.add_argument("--train-reveal-eval", action="store_true",
@@ -339,6 +346,8 @@ def main(argv=None):
             prior_source=args.prior_source,
             blend_fp=args.blend_fp,
             blend_with=args.blend_with,
+            tta_steps=args.tta_steps,
+            tta_lr=args.tta_lr,
             prior_renormalize=(
                 args.prior_renormalize
                 or any(not item.node_presence.all() for item in bundles)
@@ -353,19 +362,31 @@ def main(argv=None):
             out_dir=str(out_root / ("seed%d" % seed)),
             **VARIANTS[args.variant],
         )
-        _, _, hist = fit(
-            bundles[0].x,
-            graphs["adj_s"],
-            graphs["lap_s"],
-            graphs["lap_t"],
-            graphs["adj_s_norm"],
-            graphs["adj_t_norm"],
-            splits,
-            scaler,
-            cfg,
-            n_timestamp_classes=bundles[0].ts_classes,
-            dataset_names=dataset_labels,
+        fit_args = (
+            bundles[0].x, graphs["adj_s"], graphs["lap_s"], graphs["lap_t"],
+            graphs["adj_s_norm"], graphs["adj_t_norm"], splits, scaler,
         )
+        fit_kw = dict(n_timestamp_classes=bundles[0].ts_classes, dataset_names=dataset_labels)
+        _, eval_model, hist = fit(*fit_args, cfg, **fit_kw)
+        if args.ensemble > 1:
+            members = [eval_model]
+            for k in range(1, args.ensemble):
+                member_cfg = dataclasses.replace(
+                    cfg, seed=seed + 1000 * k, tta_steps=0,
+                    out_dir=str(out_root / ("seed%d" % seed) / ("member%d" % k)),
+                )
+                print("[ensemble] training member %d/%d" % (k + 1, args.ensemble))
+                members.append(fit(*fit_args, member_cfg, verbose=False, **fit_kw)[1])
+            ens = score_ensemble(members, splits, scaler, cfg, args.device, dataset_labels)
+            hist["test_ensemble"] = ens["test"]
+            if "test_blend" in ens:
+                hist["test_ensemble_blend"] = ens["test_blend"]
+                hist["ensemble_blend_weight"] = ens["blend_weight"]
+            for name in ("test", "test_blend"):
+                if name in ens:
+                    r = ens[name]
+                    print("[ensemble x%d %s] PCC %.4f  NMSE %.4f  PSNR %.2f dB  SNR %.2f dB"
+                          % (args.ensemble, name, r["pcc"], r["nmse"], r["psnr"], r["snr"]))
         trials.append(hist["test"])
         histories.append(hist)
         if "test_blend" in hist:
@@ -392,6 +413,17 @@ def main(argv=None):
                  [round(h["blend_weight"], 3) for h in histories]))
         summary.update(aggregate_blend=blend_agg, trials_blend=blend_trials,
                        blend_weights=[h["blend_weight"] for h in histories])
+    for key in ("test_tta", "test_tta_blend", "test_ensemble", "test_ensemble_blend"):
+        extra = [h[key] for h in histories if key in h]
+        if extra:
+            extra_agg = aggregate_trials(extra)
+            print("FINAL %s: PCC %.4f+-%.4f  NMSE %.4f+-%.4f  PSNR %.2f+-%.2f dB  SNR %.2f+-%.2f dB"
+                  % (key, extra_agg["pcc"]["mean"], extra_agg["pcc"]["std"],
+                     extra_agg["nmse"]["mean"], extra_agg["nmse"]["std"],
+                     extra_agg["psnr"]["mean"], extra_agg["psnr"]["std"],
+                     extra_agg["snr"]["mean"], extra_agg["snr"]["std"]))
+            summary["aggregate_" + key] = extra_agg
+            summary["trials_" + key] = extra
     (out_root / "summary.json").write_text(json.dumps(summary, indent=2))
     return agg
 

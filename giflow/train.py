@@ -53,6 +53,8 @@ class TrainConfig:
     prior_source: str = "heat"            # "fp": feature-propagation source
     blend_fp: bool = False                # also report w*model + (1-w)*FP, w fit on val
     blend_with: str = "fp"                # "source": blend with the flow source X_0 instead
+    tta_steps: int = 0                    # >0: per-participant test-time adaptation steps
+    tta_lr: float = 1e-4
     max_tau: float | None = 10.0
     min_tau_s: float = 0.0
     min_tau_t: float = 0.0
@@ -195,6 +197,24 @@ def optimize_source_mixture(
         "mean_weights": dict(zip(model.MIX_SOURCES, weights.mean(0).tolist())),
         "weights": weights.tolist(),
     }
+
+
+def score_ensemble(models, splits, scaler, cfg: TrainConfig, device: str,
+                   dataset_names=None) -> dict:
+    """Test metrics of the mean imputation over `models`, plus its FP blend."""
+    from .adapt import EnsembleImputer
+
+    _, val_loader, test_loader = make_loaders(*splits, cfg.batch_size, cfg.num_workers)
+    ensemble = EnsembleImputer(models)
+    out = {"test": evaluate(ensemble, test_loader, scaler, cfg, device, dataset_names)}
+    if cfg.blend_fp:
+        weight = fit_blend_weight(ensemble, val_loader, cfg, device)
+        out["blend_weight"] = weight
+        out["test_blend"] = evaluate(
+            FPBlend(ensemble, weight, cfg.blend_with), test_loader, scaler, cfg, device,
+            dataset_names,
+        )
+    return out
 
 
 @torch.no_grad()
@@ -577,5 +597,23 @@ def fit(
                 "[test blend w=%.3f] PCC %.4f  NMSE %.4f  PSNR %.2f dB  SNR %.2f dB"
                 % (weight, blend["pcc"], blend["nmse"], blend["psnr"], blend["snr"])
             )
+    if (cfg.tta_steps > 0 and cfg.architecture != "channel-token"
+            and not isinstance(scaler, (list, tuple))):
+        from .adapt import evaluate_tta
+
+        t0 = time.time()
+        tta = evaluate_tta(
+            eval_model, test_ds, scaler, cfg, device, history.get("blend_weight")
+        )
+        history["test_tta"] = tta["model"]
+        if "blend" in tta:
+            history["test_tta_blend"] = tta["blend"]
+        if verbose:
+            for name, res in tta.items():
+                print(
+                    "[test TTA %s, %d steps] PCC %.4f  NMSE %.4f  PSNR %.2f dB  SNR %.2f dB  (%.0fs)"
+                    % (name, cfg.tta_steps, res["pcc"], res["nmse"], res["psnr"], res["snr"],
+                       time.time() - t0)
+                )
     (out_dir / "history.json").write_text(json.dumps(history, indent=2, default=str))
     return model, eval_model, history

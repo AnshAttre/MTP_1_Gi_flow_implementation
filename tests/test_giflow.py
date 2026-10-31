@@ -380,6 +380,52 @@ def test_training_signal_and_fp_source():
           "fp_adj" not in keys)
 
 
+def test_ensemble_and_test_time_adaptation():
+    print("\n[ensemble / test-time adaptation]")
+    from giflow.adapt import EnsembleImputer, adapt_to_windows, evaluate_tta
+    from giflow.train import TrainConfig
+
+    b = load_synthetic(n_nodes=15, n_steps=300, seed=0)
+    tr, va, te, sc, info = build_splits(
+        b.x, b.observed_mask, window=24, missing_strategy="channel", rho=0.5, seed=0
+    )
+    g = graphs(15, 24)
+    torch.manual_seed(0)
+    model = GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, prior_source="fp", **g).eval()
+    item = te[0]
+    x, cond = item["x_true"][None], item["cond_mask"][None]
+    kw = dict(n_steps=2, node_mask=item["node_mask"][None])
+    check("ensemble of one model is that model",
+          torch.allclose(EnsembleImputer([model]).impute(x, cond, **kw), model.impute(x, cond, **kw)))
+
+    cfg = TrainConfig(batch_size=4, euler_steps=2, tta_steps=3, train_channel_drop_prob=0.5)
+
+    def adapted_prediction():
+        adapted = adapt_to_windows(model, te, cfg, "cpu", steps=3, lr=1e-2, seed=0)
+        return adapted.impute(x, cond, **kw), adapted
+
+    before, adapted = adapted_prediction()
+    check("TTA changes the model", not torch.allclose(before, model.impute(x, cond, **kw)))
+    # overwrite every evaluation entry of the test signal with noise: if TTA
+    # only uses visible electrodes, the adapted prediction cannot change
+    saved = te.x.copy()
+    ev_full = te.eval_mask > 0
+    te.x[ev_full] = np.random.default_rng(1).normal(0, 50, ev_full.sum()).astype(te.x.dtype)
+    after, _ = adapted_prediction()
+    te.x[:] = saved
+    check("TTA never sees evaluation entries", torch.allclose(before, after, atol=1e-6))
+    # control: the same perturbation on visible entries must change the result
+    visible_full = (te.observed_mask > 0) & ~ev_full
+    te.x[visible_full] = np.random.default_rng(1).normal(0, 50, visible_full.sum()).astype(te.x.dtype)
+    control, _ = adapted_prediction()
+    te.x[:] = saved
+    check("TTA leak check is sensitive (visible noise changes it)",
+          not torch.allclose(before, control, atol=1e-6))
+    res = evaluate_tta(model, te, sc, cfg, "cpu", blend_weight=0.5)
+    check("TTA reports model and blend metrics",
+          set(res) == {"model", "blend"} and np.isfinite(res["blend"]["nmse"]))
+
+
 if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
@@ -389,6 +435,7 @@ if __name__ == "__main__":
     test_masking_and_metrics()
     test_splits_and_ema()
     test_training_signal_and_fp_source()
+    test_ensemble_and_test_time_adaptation()
     print("\n" + "=" * 60)
     print("%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:
