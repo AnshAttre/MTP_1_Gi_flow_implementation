@@ -309,3 +309,36 @@ Conclusions (one subject, three seeds):
   (0.015-0.034), so hidden channels get a near-zero denominator. Next check:
   score the prior alone against the trained flow, and retry with a tau_s floor.
 - The raw DEAP + SEED-IV paper numbers were not rerun; that data is not on Kaggle.
+
+### Eval-electrode training signal and FP flow source (Kaggle T4)
+
+Diagnosis: the eval mask was applied to training windows too, so the model
+never had a training target on the electrodes it is scored on. Kernel
+`anshattre/giflow-seed4-improve` (v4), commit `9cb5fcd`, same setup as the
+previous section (one subject, window split, 50% channel masking,
+`--train-channel-drop-prob 0.5`, 20 tau epochs, 10 Euler steps, 50-epoch cap,
+patience 8, seeds 0-2). Baselines now run on every seed.
+
+| Run | Change | NMSE mean +/- std | PCC mean +/- std | PSNR (dB) | SNR (dB) | Per-seed NMSE | Best epochs |
+|---|---|---:|---:|---:|---:|---|---|
+| A | paper training config | 0.4445 +/- 0.0354 | 0.7660 +/- 0.0215 | 24.12 +/- 0.22 | 3.53 +/- 0.34 | 0.4396 / 0.4901 / 0.4039 | 3 / 2 / 7 |
+| F | A + `--prior-source fp` | 0.4257 +/- 0.0142 | 0.7596 +/- 0.0101 | 24.30 +/- 0.28 | 3.71 +/- 0.14 | 0.4244 / 0.4090 / 0.4436 | 0 / 4 / 0 |
+| R | A + `--train-keep-range 1 1 --train-reveal-eval` | 0.3771 +/- 0.0154 | 0.7904 +/- 0.0087 | 24.83 +/- 0.09 | 4.24 +/- 0.18 | 0.3581 / 0.3959 / 0.3773 | 13 / 49 / 1 |
+| RF | R + F | **0.3538 +/- 0.0195** | **0.8087 +/- 0.0093** | **25.11 +/- 0.09** | **4.52 +/- 0.23** | 0.3401 / 0.3814 / 0.3400 | 2 / 7 / 2 |
+
+Baselines over the same seeds: KNN NMSE 0.3394 +/- 0.0096 (per seed
+0.3356 / 0.3526 / 0.3302), FP 0.3360 +/- 0.0185 (0.3139 / 0.3591 / 0.3350).
+
+Conclusions (one subject, three seeds):
+
+- RF lowers NMSE by 20.4% versus A and improves every seed; PCC, PSNR and SNR
+  improve on every seed as well. The gap is about four times the A/RF stds.
+- Most of the gain comes from the training signal (R: -15.2%). The FP source
+  adds a further 6.2% on top of R but only 4.2% alone.
+- RF is still 4.2% behind KNN and 5.3% behind FP in mean NMSE. On seed 0 it is
+  within 1.3% of KNN.
+- R seed 1 selected epoch 49 of a 50-epoch cap, so a longer cap may help.
+- Protocol note for the paper: with `--train-reveal-eval`, training windows
+  expose the electrodes that are hidden at test time. This is the
+  "electrode fails later" setting (window split) or "electrode missing for a
+  new participant" (subject split), and must be stated in the methods.
