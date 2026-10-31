@@ -134,12 +134,26 @@ def load_seed_iv(
                   for v in z["channel_names"].tolist())
             if "channel_names" in z else _channel_names(x.shape[0])
         )
-        segments = None
+        segments, group_ids = None, None
         if "recording_lengths" in z:
             lengths = z["recording_lengths"].astype(int).tolist()
             boundaries = np.cumsum([0] + lengths)
             segments = tuple(zip(boundaries[:-1], boundaries[1:]))
-        return DatasetBundle(name, x, mask, adj, channel_names=channel_names, segments=segments)
+        elif "recordings" in z:
+            # pack_seed_iv.py labels recordings "<session>/<subject>_<date>:<windows>"
+            records = [str(r) for r in z["recordings"].tolist()]
+            counts = [int(r.rsplit(":", 1)[1]) for r in records]
+            if sum(counts) and x.shape[1] % sum(counts) == 0:
+                per_window = x.shape[1] // sum(counts)
+                boundaries = np.cumsum([0] + [c * per_window for c in counts])
+                segments = tuple(zip(boundaries[:-1].tolist(), boundaries[1:].tolist()))
+                group_ids = tuple(
+                    r.rsplit(":", 1)[0].split("/")[-1].split("_")[0] for r in records
+                )
+        return DatasetBundle(
+            name, x, mask, adj, channel_names=channel_names, segments=segments,
+            segment_group_ids=group_ids,
+        )
 
     if not root.exists():
         raise FileNotFoundError(

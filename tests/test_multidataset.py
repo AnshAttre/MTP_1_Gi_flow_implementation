@@ -91,6 +91,16 @@ class JointDatasetTests(unittest.TestCase):
         self.assertEqual(adjacency[1, 2], 1.0)
         self.assertEqual(adjacency[2, 3], 1.0)
 
+    def test_packed_seed_iv_recovers_recordings_and_subjects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "packed.npz"
+            recordings = np.array(["2/3_20151018:2", "3/12_20150807:3"])
+            np.savez(path, x=np.random.default_rng(0).normal(size=(62, 5000)),
+                     adj=np.ones((62, 62)), recordings=recordings)
+            bundle = load_seed_iv(path, window=100, verbose=False)
+        self.assertEqual(bundle.segments, ((0, 2000), (2000, 5000)))
+        self.assertEqual(tuple(bundle.segment_group_ids), ("3", "12"))
+
     def test_windows_respect_recording_segments(self):
         values = np.ones((2, 30))
         splits = build_splits(
