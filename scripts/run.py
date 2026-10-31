@@ -109,8 +109,9 @@ def parse_args(argv=None):
                         "training; 1 1 keeps all points (pair with channel drop)")
     p.add_argument("--prior-mode", default="exact", choices=["exact", "taylor"])
     p.add_argument("--prior-renormalize", action="store_true")
-    p.add_argument("--prior-source", default="heat", choices=["heat", "fp"],
-                   help="flow source X_0: heat-kernel prior (paper) or feature propagation")
+    p.add_argument("--prior-source", default="heat", choices=["heat", "fp", "mix"],
+                   help="flow source X_0: heat-kernel prior (paper), feature propagation, "
+                        "or a per-electrode mixture of heat/FP/KNN fit by transport cost")
     p.add_argument("--blend-fp", action="store_true",
                    help="also score w*GiFlow + (1-w)*FP, with w fit on validation")
     p.add_argument("--train-reveal-eval", action="store_true",

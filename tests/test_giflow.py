@@ -347,6 +347,31 @@ def test_training_signal_and_fp_source():
     _, val_loader, _ = make_loaders(tr, va, te, batch_size=8)
     w = fit_blend_weight(model, val_loader, TrainConfig(euler_steps=2), "cpu")
     check("fitted blend weight lies in [0, 1]", 0.0 <= w <= 1.0, "w=%.3f" % w)
+    from giflow.baselines import knn_spatial
+    from giflow.train import optimize_source_mixture
+    mix = GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, prior_source="mix", **g)
+    with torch.no_grad():
+        mix.mix_logits.fill_(-30.0)
+        mix.mix_logits[:, 1] = 30.0
+    check("mixture all on FP equals the FP source",
+          torch.allclose(mix.source_sample(x * cond, cond), src, atol=1e-4))
+    with torch.no_grad():
+        mix.mix_logits.fill_(-30.0)
+        mix.mix_logits[:, 2] = 30.0
+    knn_ref = knn_spatial(x[0].numpy(), cond[0].numpy(), g["adj_s"])
+    hidden = (1 - cond[0]).bool().numpy()
+    check("mixture all on KNN matches the KNN baseline on hidden entries",
+          np.allclose(mix.source_sample(x * cond, cond)[0].detach().numpy()[hidden], knn_ref[hidden], atol=1e-4))
+    with torch.no_grad():
+        mix.mix_logits.zero_()
+    train_loader, _, _ = make_loaders(tr, va, te, batch_size=8)
+    res = optimize_source_mixture(
+        mix, train_loader, TrainConfig(train_channel_drop_prob=0.5), "cpu",
+        generator=torch.Generator().manual_seed(0), epochs=6, lr=0.1, verbose=False,
+    )
+    check("source-mixture fit lowers the hidden-entry transport cost",
+          res["history"][-1] < res["history"][0],
+          "%.4f -> %.4f" % (res["history"][0], res["history"][-1]))
     keys = set(GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, **g).state_dict())
     check("FP operator is not saved, so old checkpoints still load",
           "fp_adj" not in keys)

@@ -141,8 +141,8 @@ class GiFlow(nn.Module):
         fp_iterations: int = 40,
     ):
         super().__init__()
-        if prior_source not in ("heat", "fp"):
-            raise ValueError("prior_source must be 'heat' or 'fp'")
+        if prior_source not in ("heat", "fp", "mix"):
+            raise ValueError("prior_source must be 'heat', 'fp' or 'mix'")
         self.gaussian_prior = gaussian_prior
         self.prior_source = prior_source
         self.fp_iterations = fp_iterations
@@ -151,6 +151,14 @@ class GiFlow(nn.Module):
             "fp_adj", torch.as_tensor(np.asarray(adj_s_norm), dtype=torch.float32),
             persistent=False,
         )
+        if prior_source == "mix":
+            # per-electrode softmax weights over (heat kernel, FP, KNN) sources,
+            # fit by minimising the transport cost E||X_1 - X_0||^2
+            self.register_buffer(
+                "knn_adj", torch.as_tensor(np.asarray(adj_s), dtype=torch.float32),
+                persistent=False,
+            )
+            self.mix_logits = nn.Parameter(torch.zeros(len(adj_s), len(self.MIX_SOURCES)))
         self.prior = GraphInformedPrior(
             lap_s,
             lap_t,
@@ -209,6 +217,8 @@ class GiFlow(nn.Module):
             source = torch.randn_like(x_cond)
         elif self.prior_source == "fp":
             source = self.feature_propagation(x_cond, cond_mask)
+        elif self.prior_source == "mix":
+            source = self.source_mixture(x_cond, cond_mask)
         else:
             source = self.prior(x_cond, cond_mask)
         return source if node_mask is None else source * node_mask[:, :, None]
@@ -224,6 +234,37 @@ class GiFlow(nn.Module):
             out = torch.einsum("ij,bjr->bir", self.fp_adj, out)
             out = cond_mask * x_cond + (1.0 - cond_mask) * out
         return out
+
+    MIX_SOURCES = ("heat", "fp", "knn")
+
+    def knn_average(self, x_cond: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
+        """Neighbour average over visible electrodes, matching the KNN baseline;
+        electrodes with no visible neighbour fall back to the visible mean."""
+        num = torch.einsum("ij,bjr->bir", self.knn_adj, x_cond)
+        den = torch.einsum("ij,bjr->bir", self.knn_adj, cond_mask)
+        fallback = x_cond.sum(1, keepdim=True) / cond_mask.sum(1, keepdim=True).clamp_min(1.0)
+        out = torch.where(den > 0, num / den.clamp_min(1e-8), fallback.expand_as(num))
+        return cond_mask * x_cond + (1.0 - cond_mask) * out
+
+    def mixture_weights(self) -> torch.Tensor:
+        """(N, n_sources) per-electrode source weights."""
+        return torch.softmax(self.mix_logits, dim=-1)
+
+    def source_mixture(self, x_cond: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
+        """Per-electrode mixture of the heat-kernel, FP and KNN estimates.
+
+        Visible entries are kept as observed; only the hidden ones are mixed.
+        """
+        sources = torch.stack(
+            [
+                self.prior(x_cond, cond_mask),
+                self.feature_propagation(x_cond, cond_mask),
+                self.knn_average(x_cond, cond_mask),
+            ],
+            dim=-1,
+        )                                                     # (B, N, R, K)
+        mixed = (sources * self.mixture_weights()[None, :, None, :]).sum(-1)
+        return cond_mask * x_cond + (1.0 - cond_mask) * mixed
 
     # --------------------------------------------------------------- training
     def loss(

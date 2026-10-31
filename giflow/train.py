@@ -145,6 +145,47 @@ def fit_blend_weight(model, loader, cfg: TrainConfig, device: str) -> float:
     return min(max(num / den, 0.0), 1.0) if den > 0 else 1.0
 
 
+def optimize_source_mixture(
+    model, loader, cfg: TrainConfig, device: str, generator=None,
+    epochs: int = 10, lr: float = 0.05, verbose: bool = True,
+) -> dict:
+    """Fit the per-electrode source weights by minimising the transport cost
+    E||X_1 - X_0||^2 on hidden entries (Theorem 3.2), with the heat-kernel
+    factors already fixed. Electrodes are hidden as in flow training, so every
+    electrode gets a weight, not only the evaluation ones."""
+    opt = torch.optim.Adam([model.mix_logits], lr=lr)
+    history = []
+    for epoch in range(epochs):
+        tot, nb = 0.0, 0
+        for batch in loader:
+            x_true = batch["x_true"].to(device)
+            base = batch["cond_mask"].to(device)
+            cond = random_subset_mask(
+                base, (1.0, 1.0),
+                channel_drop_prob=max(cfg.train_channel_drop_prob, 0.5),
+                generator=generator,
+            )
+            hidden = base - cond
+            if float(hidden.sum()) == 0:
+                continue
+            x0 = model.source_mixture(x_true * cond, cond)
+            loss = (((x0 - x_true) * hidden) ** 2).sum() / hidden.sum()
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            tot += float(loss.detach())
+            nb += 1
+        history.append(tot / max(nb, 1))
+        if verbose:
+            print("  mix-opt epoch %2d  hidden MSE %.4f" % (epoch, history[-1]))
+    weights = model.mixture_weights().detach().cpu()
+    return {
+        "history": history,
+        "mean_weights": dict(zip(model.MIX_SOURCES, weights.mean(0).tolist())),
+        "weights": weights.tolist(),
+    }
+
+
 @torch.no_grad()
 def evaluate(model, loader, scaler, cfg: TrainConfig, device: str, dataset_names=None) -> dict:
     """Impute the loader's windows and score on the eval mask, in original units."""
@@ -348,6 +389,21 @@ def fit(
     if cfg.architecture != "channel-token":
         for p in model.prior.parameters():
             p.requires_grad_(False)
+    if cfg.architecture != "channel-token" and cfg.prior_source == "mix":
+        if verbose:
+            print("[stage 1b] fitting per-electrode source mixture (heat / FP / KNN)")
+        mix_loader, _, _ = make_loaders(
+            train_ds, val_ds, test_ds, cfg.tau_batch_size, cfg.num_workers
+        )
+        mix_gen = torch.Generator(device=device).manual_seed(cfg.seed + 1)
+        mix_res = optimize_source_mixture(
+            model, mix_loader, cfg, device, generator=mix_gen, verbose=verbose
+        )
+        model.mix_logits.requires_grad_(False)
+        history["source_mixture"] = mix_res
+        if verbose:
+            print("[stage 1b] mean weights %s" % {
+                k: round(v, 3) for k, v in mix_res["mean_weights"].items()})
 
     # ------------------------------------------- transport cost (Theorem 3.2)
     if cfg.architecture != "channel-token":
