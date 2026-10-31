@@ -118,6 +118,8 @@ def parse_args(argv=None):
                         "or a per-electrode mixture of heat/FP/KNN fit by transport cost")
     p.add_argument("--blend-fp", action="store_true",
                    help="also score w*GiFlow + (1-w)*FP, with w fit on validation")
+    p.add_argument("--blend-with", default="fp", choices=["fp", "source"],
+                   help="what --blend-fp mixes the flow output with: FP or the flow source X_0")
     p.add_argument("--train-reveal-eval", action="store_true",
                    help="train on the eval-hidden entries of training windows; "
                         "validation and test keep the eval mask")
@@ -336,6 +338,7 @@ def main(argv=None):
             prior_mode=args.prior_mode,
             prior_source=args.prior_source,
             blend_fp=args.blend_fp,
+            blend_with=args.blend_with,
             prior_renormalize=(
                 args.prior_renormalize
                 or any(not item.node_presence.all() for item in bundles)

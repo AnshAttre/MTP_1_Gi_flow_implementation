@@ -346,7 +346,6 @@ def test_training_signal_and_fp_source():
     check("blend w=0 is FP", torch.allclose(FPBlend(model, 0.0).impute(x, cond, **kw), src, atol=1e-5))
     _, val_loader, _ = make_loaders(tr, va, te, batch_size=8)
     w = fit_blend_weight(model, val_loader, TrainConfig(euler_steps=2), "cpu")
-    check("fitted blend weight lies in [0, 1]", 0.0 <= w <= 1.0, "w=%.3f" % w)
     from giflow.baselines import knn_spatial
     from giflow.train import optimize_source_mixture
     mix = GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, prior_source="mix", **g)
@@ -372,6 +371,10 @@ def test_training_signal_and_fp_source():
     check("source-mixture fit lowers the hidden-entry transport cost",
           res["history"][-1] < res["history"][0],
           "%.4f -> %.4f" % (res["history"][0], res["history"][-1]))
+    check("fitted blend weight lies in [0, 1]", 0.0 <= w <= 1.0, "w=%.3f" % w)
+    mix_src = mix.source_sample(x * cond, cond).detach()
+    check("source blend w=0 is the flow source",
+          torch.allclose(FPBlend(mix, 0.0, "source").impute(x, cond, **kw), mix_src, atol=1e-5))
     keys = set(GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, **g).state_dict())
     check("FP operator is not saved, so old checkpoints still load",
           "fp_adj" not in keys)

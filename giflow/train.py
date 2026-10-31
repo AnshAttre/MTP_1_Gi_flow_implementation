@@ -52,6 +52,7 @@ class TrainConfig:
     prior_renormalize: bool = False
     prior_source: str = "heat"            # "fp": feature-propagation source
     blend_fp: bool = False                # also report w*model + (1-w)*FP, w fit on val
+    blend_with: str = "fp"                # "source": blend with the flow source X_0 instead
     max_tau: float | None = 10.0
     min_tau_s: float = 0.0
     min_tau_t: float = 0.0
@@ -101,24 +102,34 @@ def _timestamps(batch, device):
     return None if ts is None else ts.to(device)
 
 
+def _blend_reference(model, x_obs, cond_mask, reference: str = "fp"):
+    """Non-learned estimate the flow output is blended with: FP, or the flow
+    source X_0 (e.g. the fitted heat/FP/KNN mixture). Keeps visible entries."""
+    x_cond = x_obs * cond_mask
+    if reference == "source":
+        return cond_mask * x_obs + (1.0 - cond_mask) * model.source_sample(x_cond, cond_mask)
+    return model.feature_propagation(x_cond, cond_mask)
+
+
 class FPBlend(torch.nn.Module):
-    """Imputer returning w * model + (1 - w) * feature propagation.
+    """Imputer returning w * model + (1 - w) * reference (FP by default).
 
     Both terms keep the visible entries, so the blend does too.
     """
 
-    def __init__(self, model, weight: float):
+    def __init__(self, model, weight: float, reference: str = "fp"):
         super().__init__()
         self.model = model
         self.weight = float(weight)
+        self.reference = reference
 
     @torch.no_grad()
     def impute(self, x_obs, cond_mask, node_mask=None, **kw):
         pred = self.model.impute(x_obs, cond_mask, node_mask=node_mask, **kw)
-        fp = self.model.feature_propagation(x_obs * cond_mask, cond_mask)
+        ref = _blend_reference(self.model, x_obs, cond_mask, self.reference)
         if node_mask is not None:
-            fp = fp * node_mask[:, :, None]
-        return self.weight * pred + (1.0 - self.weight) * fp
+            ref = ref * node_mask[:, :, None]
+        return self.weight * pred + (1.0 - self.weight) * ref
 
 
 @torch.no_grad()
@@ -138,7 +149,7 @@ def fit_blend_weight(model, loader, cfg: TrainConfig, device: str) -> float:
             x_true, cond, n_steps=cfg.euler_steps,
             timestamps=_timestamps(batch, device), node_mask=node_mask,
         )
-        fp = model.feature_propagation(x_true * cond, cond)
+        fp = _blend_reference(model, x_true, cond, cfg.blend_with)
         d = (pred - fp) * ev
         num += float((d * (x_true - fp)).sum())
         den += float((d * d).sum())
@@ -556,7 +567,7 @@ def fit(
     if cfg.blend_fp and cfg.architecture != "channel-token":
         weight = fit_blend_weight(eval_model, val_loader, cfg, device)
         blend = evaluate(
-            FPBlend(eval_model, weight), test_loader, scaler, cfg, device,
+            FPBlend(eval_model, weight, cfg.blend_with), test_loader, scaler, cfg, device,
             dataset_names=history.get("dataset_names"),
         )
         history["blend_weight"] = weight
