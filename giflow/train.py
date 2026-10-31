@@ -108,6 +108,10 @@ def _blend_reference(model, x_obs, cond_mask, reference: str = "fp"):
     """Non-learned estimate the flow output is blended with: FP, or the flow
     source X_0 (e.g. the fitted heat/FP/KNN mixture). Keeps visible entries."""
     x_cond = x_obs * cond_mask
+    if reference == "spline":
+        from .data.montage import spline_interpolate
+
+        return spline_interpolate(model.spline_g, x_cond, cond_mask)
     if reference == "source":
         return cond_mask * x_obs + (1.0 - cond_mask) * model.source_sample(x_cond, cond_mask)
     return model.feature_propagation(x_cond, cond_mask)
@@ -194,7 +198,7 @@ def optimize_source_mixture(
     weights = model.mixture_weights().detach().cpu()
     return {
         "history": history,
-        "mean_weights": dict(zip(model.MIX_SOURCES, weights.mean(0).tolist())),
+        "mean_weights": dict(zip(model.mix_sources, weights.mean(0).tolist())),
         "weights": weights.tolist(),
     }
 
@@ -327,8 +331,12 @@ def fit(
     n_timestamp_classes: tuple = (),
     dataset_names: tuple = (),
     verbose: bool = True,
+    spline_positions=None,
 ):
-    """Run the full pipeline: tau optimisation, then flow-matching training."""
+    """Run the full pipeline: tau optimisation, then flow-matching training.
+
+    `spline_positions` (N, 3) adds the spherical spline to the source mixture.
+    """
     if cfg.threads:
         torch.set_num_threads(cfg.threads)
     set_seed(cfg.seed)
@@ -370,6 +378,7 @@ def fit(
         learn_temporal_prior=cfg.learn_temporal_prior,
         prior_renormalize=cfg.prior_renormalize,
         prior_source=cfg.prior_source,
+        spline_positions=spline_positions,
         max_tau=cfg.max_tau,
         min_tau_s=cfg.min_tau_s,
         min_tau_t=cfg.min_tau_t,
@@ -422,7 +431,8 @@ def fit(
             p.requires_grad_(False)
     if cfg.architecture != "channel-token" and cfg.prior_source == "mix":
         if verbose:
-            print("[stage 1b] fitting per-electrode source mixture (heat / FP / KNN)")
+            print("[stage 1b] fitting per-electrode source mixture (%s)"
+              % " / ".join(model.mix_sources))
         mix_loader, _, _ = make_loaders(
             train_ds, val_ds, test_ds, cfg.tau_batch_size, cfg.num_workers
         )

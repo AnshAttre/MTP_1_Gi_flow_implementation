@@ -426,6 +426,46 @@ def test_ensemble_and_test_time_adaptation():
           set(res) == {"model", "blend"} and np.isfinite(res["blend"]["nmse"]))
 
 
+def test_spherical_spline():
+    print("\n[spherical spline]")
+    from giflow.data.montage import spherical_spline_g, spline_interpolate
+
+    rng = np.random.default_rng(0)
+    pos = rng.normal(size=(40, 3))
+    pos /= np.linalg.norm(pos, axis=1, keepdims=True)
+    g_mat = torch.as_tensor(spherical_spline_g(pos), dtype=torch.float64)
+    # a smooth scalp field: low-order polynomial of the coordinates, 5 samples
+    field = torch.as_tensor(
+        np.stack([pos[:, 0] + 0.5 * pos[:, 1] * pos[:, 2] * k for k in range(1, 6)], 1),
+        dtype=torch.float32,
+    )[None]
+    cond = torch.ones_like(field)
+    hidden = rng.choice(40, 8, replace=False)
+    cond[:, hidden] = 0
+    est = spline_interpolate(g_mat, field * cond, cond)
+    err = float(((est - field) ** 2)[:, hidden].sum() / (field ** 2)[:, hidden].sum())
+    check("spline recovers a smooth field (NMSE < 0.05)", err < 0.05, "NMSE %.4f" % err)
+    check("spline keeps visible entries", torch.allclose(est * cond, field * cond))
+    # a different visible set per window in one batch
+    cond2 = torch.ones(2, 40, 5)
+    cond2[0, hidden[:4]] = 0
+    cond2[1, hidden[4:]] = 0
+    batched = spline_interpolate(g_mat, field.repeat(2, 1, 1) * cond2, cond2)
+    single = spline_interpolate(g_mat, field * cond2[1:], cond2[1:])
+    check("batched spline matches per-window spline", torch.allclose(batched[1:], single, atol=1e-5))
+
+    g = graphs(40, 5)
+    mix = GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, prior_source="mix",
+                 spline_positions=pos, **g)
+    check("mixture gains a spline source", mix.mix_sources[-1] == "spline"
+          and tuple(mix.mix_logits.shape) == (40, 4))
+    with torch.no_grad():
+        mix.mix_logits.fill_(-30.0)
+        mix.mix_logits[:, 3] = 30.0
+    check("mixture all on spline equals the spline",
+          torch.allclose(mix.source_sample(field * cond, cond), est, atol=1e-4))
+
+
 if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
@@ -436,6 +476,7 @@ if __name__ == "__main__":
     test_splits_and_ema()
     test_training_signal_and_fp_source()
     test_ensemble_and_test_time_adaptation()
+    test_spherical_spline()
     print("\n" + "=" * 60)
     print("%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:

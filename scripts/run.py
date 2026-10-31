@@ -125,8 +125,12 @@ def parse_args(argv=None):
     p.add_argument("--tta-steps", type=int, default=0,
                    help="per-participant test-time adaptation on visible electrodes")
     p.add_argument("--tta-lr", type=float, default=1e-4)
-    p.add_argument("--blend-with", default="fp", choices=["fp", "source"],
-                   help="what --blend-fp mixes the flow output with: FP or the flow source X_0")
+    p.add_argument("--blend-with", default="fp", choices=["fp", "source", "spline"],
+                   help="what --blend-fp mixes the flow output with: FP, the flow source X_0, "
+                        "or the spherical spline (needs --spline)")
+    p.add_argument("--spline", action="store_true",
+                   help="score the spherical-spline baseline and add it to the "
+                        "--prior-source mix sources (needs MNE for electrode positions)")
     p.add_argument("--train-reveal-eval", action="store_true",
                    help="train on the eval-hidden entries of training windows; "
                         "validation and test keep the eval mask")
@@ -303,13 +307,19 @@ def main(argv=None):
                 print("[data] %s windows=%d split=%s eval_rate=%.3f"
                       % (item["name"], item["n_windows"], item["split_sizes"], item["eval_rate"]))
         print("[data] split mode=%s" % args.split_mode)
+        spline_pos = None
+        if args.spline:
+            if len(bundles) > 1:
+                raise ValueError("--spline supports a single dataset")
+            from giflow.data.montage import spline_positions
+            spline_pos = spline_positions(bundles[0].channel_names)
 
         if not args.skip_baselines:
             _, _, test_loader = make_loaders(*splits, batch_size=args.batch_size)
             t0 = time.time()
             base = run_baselines(
                 test_loader, scaler, graphs["adj_s"], graphs["adj_s_norm"],
-                dataset_names=dataset_labels,
+                dataset_names=dataset_labels, spline_positions=spline_pos,
             )
             print("[baselines] (%.1fs)" % (time.time() - t0))
             for k, v in base.items():
@@ -366,7 +376,8 @@ def main(argv=None):
             bundles[0].x, graphs["adj_s"], graphs["lap_s"], graphs["lap_t"],
             graphs["adj_s_norm"], graphs["adj_t_norm"], splits, scaler,
         )
-        fit_kw = dict(n_timestamp_classes=bundles[0].ts_classes, dataset_names=dataset_labels)
+        fit_kw = dict(n_timestamp_classes=bundles[0].ts_classes, dataset_names=dataset_labels,
+                      spline_positions=spline_pos)
         _, eval_model, hist = fit(*fit_args, cfg, **fit_kw)
         if args.ensemble > 1:
             members = [eval_model]

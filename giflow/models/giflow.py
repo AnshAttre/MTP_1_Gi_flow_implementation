@@ -139,6 +139,7 @@ class GiFlow(nn.Module):
         srg_lambda_smm: float = 0.01,
         prior_source: str = "heat",
         fp_iterations: int = 40,
+        spline_positions: np.ndarray | None = None,
     ):
         super().__init__()
         if prior_source not in ("heat", "fp", "mix"):
@@ -158,7 +159,17 @@ class GiFlow(nn.Module):
                 "knn_adj", torch.as_tensor(np.asarray(adj_s), dtype=torch.float32),
                 persistent=False,
             )
-            self.mix_logits = nn.Parameter(torch.zeros(len(adj_s), len(self.MIX_SOURCES)))
+            self.mix_sources = self.MIX_SOURCES + (("spline",) if spline_positions is not None else ())
+            if spline_positions is not None:
+                from ..data.montage import spherical_spline_g
+
+                self.register_buffer(
+                    "spline_g",
+                    torch.as_tensor(spherical_spline_g(np.asarray(spline_positions)),
+                                    dtype=torch.float64),
+                    persistent=False,
+                )
+            self.mix_logits = nn.Parameter(torch.zeros(len(adj_s), len(self.mix_sources)))
         self.prior = GraphInformedPrior(
             lap_s,
             lap_t,
@@ -251,18 +262,21 @@ class GiFlow(nn.Module):
         return torch.softmax(self.mix_logits, dim=-1)
 
     def source_mixture(self, x_cond: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
-        """Per-electrode mixture of the heat-kernel, FP and KNN estimates.
+        """Per-electrode mixture of the heat-kernel, FP and KNN estimates, plus
+        the spherical spline when electrode positions were given.
 
         Visible entries are kept as observed; only the hidden ones are mixed.
         """
-        sources = torch.stack(
-            [
-                self.prior(x_cond, cond_mask),
-                self.feature_propagation(x_cond, cond_mask),
-                self.knn_average(x_cond, cond_mask),
-            ],
-            dim=-1,
-        )                                                     # (B, N, R, K)
+        estimates = [
+            self.prior(x_cond, cond_mask),
+            self.feature_propagation(x_cond, cond_mask),
+            self.knn_average(x_cond, cond_mask),
+        ]
+        if "spline" in self.mix_sources:
+            from ..data.montage import spline_interpolate
+
+            estimates.append(spline_interpolate(self.spline_g, x_cond, cond_mask))
+        sources = torch.stack(estimates, dim=-1)              # (B, N, R, K)
         mixed = (sources * self.mixture_weights()[None, :, None, :]).sum(-1)
         return cond_mask * x_cond + (1.0 - cond_mask) * mixed
 

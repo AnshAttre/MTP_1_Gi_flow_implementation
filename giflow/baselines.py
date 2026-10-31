@@ -62,7 +62,19 @@ def feature_propagation(x, cond, adj_norm, n_iter: int = 40):
 ALL = ("mean_s", "mean_t", "linear", "knn", "fp")
 
 
-def run_baselines(loader, scaler, adj, adj_norm, which=ALL, dataset_names=None) -> dict:
+def run_baselines(loader, scaler, adj, adj_norm, which=ALL, dataset_names=None,
+                  spline_positions=None) -> dict:
+    """Score the non-parametric baselines; adds the spherical spline ("spline")
+    when electrode positions are given."""
+    spline_g = None
+    if spline_positions is not None:
+        import torch
+
+        from .data.montage import spherical_spline_g, spline_interpolate
+
+        spline_g = torch.as_tensor(spherical_spline_g(np.asarray(spline_positions)),
+                                   dtype=torch.float64)
+        which = tuple(which) + ("spline",)
     joint = isinstance(scaler, (list, tuple))
     n_datasets = len(scaler) if joint else 1
     accs = {k: [MetricAccumulator() for _ in range(n_datasets)] for k in which}
@@ -84,6 +96,10 @@ def run_baselines(loader, scaler, adj, adj_norm, which=ALL, dataset_names=None) 
                 preds["knn"] = knn_spatial(x, cond, adj)
             if "fp" in which:
                 preds["fp"] = feature_propagation(x, cond, adj_norm)
+            if spline_g is not None:
+                preds["spline"] = spline_interpolate(
+                    spline_g, torch.as_tensor(x * cond)[None], torch.as_tensor(cond)[None]
+                )[0].numpy()
             for k, p in preds.items():
                 dataset_scaler = scaler[dataset_id] if joint else scaler
                 accs[k][dataset_id].update(
