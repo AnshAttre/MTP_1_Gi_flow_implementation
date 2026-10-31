@@ -248,6 +248,14 @@ def test_masking_and_metrics():
     ev2 = make_eval_mask(obs2, "point", 0.2, seed=0)
     check("eval mask respects genuine gaps", bool((ev2 * (1 - obs2)).sum() == 0))
 
+    # keep range (1, 1) plus channel drop hides whole electrodes only
+    from giflow.data.masking import random_subset_mask
+    full = torch.ones(4, 20, 50)
+    sub = random_subset_mask(full, (1.0, 1.0), channel_drop_prob=0.3)
+    per_channel = sub.sum(-1)
+    check("keep range 1..1 with channel drop hides whole channels only",
+          bool(((per_channel == 0) | (per_channel == 50)).all()) and float(sub.sum()) < full.numel())
+
     pred = np.array([[1.0, 2.0, 3.0]])
     tgt = np.array([[1.0, 4.0, 3.0]])
     msk = np.array([[0.0, 1.0, 0.0]])

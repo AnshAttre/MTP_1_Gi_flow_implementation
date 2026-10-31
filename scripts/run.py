@@ -103,6 +103,10 @@ def parse_args(argv=None):
                    help="probability of hiding each electrode during training")
     p.add_argument("--train-token-rho-min", type=float, default=0.1)
     p.add_argument("--train-token-rho-max", type=float, default=0.9)
+    p.add_argument("--train-keep-range", type=float, nargs=2, default=(0.3, 0.9),
+                   metavar=("LO", "HI"),
+                   help="fraction of visible entries kept as conditioning during "
+                        "training; 1 1 keeps all points (pair with channel drop)")
     p.add_argument("--prior-mode", default="exact", choices=["exact", "taylor"])
     p.add_argument("--prior-renormalize", action="store_true")
     p.add_argument("--max-tau", type=float, default=10.0,
@@ -309,6 +313,7 @@ def main(argv=None):
             train_token_rho_range=(args.train_token_rho_min, args.train_token_rho_max),
             architecture=(args.architecture or VARIANTS[args.variant].get("architecture", "giflow")),
             token_patch_size=args.token_patch_size,
+            train_keep_range=tuple(args.train_keep_range),
             tau_epochs=args.tau_epochs,
             prior_mode=args.prior_mode,
             prior_renormalize=(
