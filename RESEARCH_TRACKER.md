@@ -278,3 +278,34 @@ The `incomplete_wrong_root_*` folders contain partial diagnostics from an
 incorrect default SEED root and are not part of these results. Pass
 `--seed-root data/seed4/eeg_raw_data` explicitly when the parent folder also
 contains processed recordings.
+
+### Prior renormalization and channel-only training masks (Kaggle T4)
+
+Question: do the renormalized heat-kernel prior (`--prior-renormalize`) and a
+training mask that hides whole electrodes only (`--train-keep-range 1 1`)
+close the gap to KNN? Kernel `anshattre/giflow-seed4-improve`, commit
+`f8e2fc8`, packed one-subject SEED-IV (`seed_iv_one.npz`, window split, not
+the participant-held-out raw-data setup above). All runs: 50% channel
+masking, `--train-channel-drop-prob 0.5`, 20 tau epochs, 10 Euler steps,
+50-epoch cap, patience 8, seeds 0-2. Each seed also changes which channels are
+hidden, so the seed-0 column is the only one matched to the baselines.
+
+| Run | Change | NMSE mean +/- std | PCC mean +/- std | Seed-0 NMSE | tau_s (seed 0) |
+|---|---|---:|---:|---:|---:|
+| A | paper training config | 0.4445 +/- 0.0354 | 0.7660 +/- 0.0215 | 0.4396 | 0.1030 |
+| B | A + renormalized prior | 0.4622 +/- 0.0673 | 0.7375 +/- 0.0436 | 0.5482 | 0.0337 |
+| C | A + whole-electrode training mask | 0.4320 +/- 0.0614 | 0.7714 +/- 0.0270 | 0.3967 | 0.1030 |
+| D | B + C | 0.4455 +/- 0.0586 | 0.7494 +/- 0.0386 | 0.5141 | 0.0337 |
+
+Seed-0 baselines: KNN NMSE 0.3356 / PCC 0.8177, FP NMSE 0.3139 / PCC 0.8310.
+
+Conclusions (one subject, three seeds):
+
+- No variant beats KNN or FP; the best seed-0 run (C, 0.3967) trails KNN by 18%.
+- C lowers mean NMSE by 2.8% versus A, but the difference is smaller than the
+  seed standard deviation. Treat it as not established.
+- The renormalized prior hurts after training (B, D), although on its own it
+  matched KNN in a local prior-only check. Its tau_s fits much lower
+  (0.015-0.034), so hidden channels get a near-zero denominator. Next check:
+  score the prior alone against the trained flow, and retry with a tau_s floor.
+- The raw DEAP + SEED-IV paper numbers were not rerun; that data is not on Kaggle.
