@@ -51,6 +51,7 @@ class TrainConfig:
     prior_order: int = 10
     prior_renormalize: bool = False
     prior_source: str = "heat"            # "fp": feature-propagation source
+    blend_fp: bool = False                # also report w*model + (1-w)*FP, w fit on val
     max_tau: float | None = 10.0
     min_tau_s: float = 0.0
     min_tau_t: float = 0.0
@@ -98,6 +99,50 @@ def count_params(model) -> int:
 def _timestamps(batch, device):
     ts = batch.get("timestamps")
     return None if ts is None else ts.to(device)
+
+
+class FPBlend(torch.nn.Module):
+    """Imputer returning w * model + (1 - w) * feature propagation.
+
+    Both terms keep the visible entries, so the blend does too.
+    """
+
+    def __init__(self, model, weight: float):
+        super().__init__()
+        self.model = model
+        self.weight = float(weight)
+
+    @torch.no_grad()
+    def impute(self, x_obs, cond_mask, node_mask=None, **kw):
+        pred = self.model.impute(x_obs, cond_mask, node_mask=node_mask, **kw)
+        fp = self.model.feature_propagation(x_obs * cond_mask, cond_mask)
+        if node_mask is not None:
+            fp = fp * node_mask[:, :, None]
+        return self.weight * pred + (1.0 - self.weight) * fp
+
+
+@torch.no_grad()
+def fit_blend_weight(model, loader, cfg: TrainConfig, device: str) -> float:
+    """Least-squares w for w * model + (1 - w) * FP on the eval entries, in [0, 1].
+
+    Fit on the validation split only, so the test split stays untouched.
+    """
+    model.eval()
+    num, den = 0.0, 0.0
+    for batch in loader:
+        x_true = batch["x_true"].to(device)
+        cond = batch["cond_mask"].to(device)
+        ev = batch["eval_mask"].to(device)
+        node_mask = batch["node_mask"].to(device)
+        pred = model.impute(
+            x_true, cond, n_steps=cfg.euler_steps,
+            timestamps=_timestamps(batch, device), node_mask=node_mask,
+        )
+        fp = model.feature_propagation(x_true * cond, cond)
+        d = (pred - fp) * ev
+        num += float((d * (x_true - fp)).sum())
+        den += float((d * d).sum())
+    return min(max(num / den, 0.0), 1.0) if den > 0 else 1.0
 
 
 @torch.no_grad()
@@ -452,5 +497,18 @@ def fit(
                 % (test["pcc"], test["nmse"], test["psnr"], test["snr"],
                     test["n"], history["test_seconds"])
         )
+    if cfg.blend_fp and cfg.architecture != "channel-token":
+        weight = fit_blend_weight(eval_model, val_loader, cfg, device)
+        blend = evaluate(
+            FPBlend(eval_model, weight), test_loader, scaler, cfg, device,
+            dataset_names=history.get("dataset_names"),
+        )
+        history["blend_weight"] = weight
+        history["test_blend"] = blend
+        if verbose:
+            print(
+                "[test blend w=%.3f] PCC %.4f  NMSE %.4f  PSNR %.2f dB  SNR %.2f dB"
+                % (weight, blend["pcc"], blend["nmse"], blend["psnr"], blend["snr"])
+            )
     (out_dir / "history.json").write_text(json.dumps(history, indent=2, default=str))
     return model, eval_model, history

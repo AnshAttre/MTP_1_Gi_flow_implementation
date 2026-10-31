@@ -111,6 +111,8 @@ def parse_args(argv=None):
     p.add_argument("--prior-renormalize", action="store_true")
     p.add_argument("--prior-source", default="heat", choices=["heat", "fp"],
                    help="flow source X_0: heat-kernel prior (paper) or feature propagation")
+    p.add_argument("--blend-fp", action="store_true",
+                   help="also score w*GiFlow + (1-w)*FP, with w fit on validation")
     p.add_argument("--train-reveal-eval", action="store_true",
                    help="train on the eval-hidden entries of training windows; "
                         "validation and test keep the eval mask")
@@ -262,7 +264,7 @@ def main(argv=None):
         dataset_tag, args.variant, args.missing, args.rho)))
     out_root.mkdir(parents=True, exist_ok=True)
 
-    trials, histories = [], []
+    trials, histories, blend_trials = [], [], []
     for i in range(args.seeds):
         seed = args.seed0 + i
         print("\n" + "=" * 72)
@@ -326,6 +328,7 @@ def main(argv=None):
             tau_epochs=args.tau_epochs,
             prior_mode=args.prior_mode,
             prior_source=args.prior_source,
+            blend_fp=args.blend_fp,
             prior_renormalize=(
                 args.prior_renormalize
                 or any(not item.node_presence.all() for item in bundles)
@@ -355,6 +358,8 @@ def main(argv=None):
         )
         trials.append(hist["test"])
         histories.append(hist)
+        if "test_blend" in hist:
+            blend_trials.append(hist["test_blend"])
 
     agg = aggregate_trials(trials)
     print("\n" + "-" * 72)
@@ -365,9 +370,19 @@ def main(argv=None):
              agg["snr"]["mean"], agg["snr"]["std"]))
     total = sum(h["train_seconds"] for h in histories)
     print("total training wall-clock: %.1f min" % (total / 60))
-    (out_root / "summary.json").write_text(
-        json.dumps({"args": vars(args), "aggregate": agg, "trials": trials}, indent=2)
-    )
+    summary = {"args": vars(args), "aggregate": agg, "trials": trials}
+    if blend_trials:
+        blend_agg = aggregate_trials(blend_trials)
+        print("FINAL blend (w*GiFlow + (1-w)*FP): PCC %.4f+-%.4f  NMSE %.4f+-%.4f  "
+              "PSNR %.2f+-%.2f dB  SNR %.2f+-%.2f dB  w=%s"
+              % (blend_agg["pcc"]["mean"], blend_agg["pcc"]["std"],
+                 blend_agg["nmse"]["mean"], blend_agg["nmse"]["std"],
+                 blend_agg["psnr"]["mean"], blend_agg["psnr"]["std"],
+                 blend_agg["snr"]["mean"], blend_agg["snr"]["std"],
+                 [round(h["blend_weight"], 3) for h in histories]))
+        summary.update(aggregate_blend=blend_agg, trials_blend=blend_trials,
+                       blend_weights=[h["blend_weight"] for h in histories])
+    (out_root / "summary.json").write_text(json.dumps(summary, indent=2))
     return agg
 
 

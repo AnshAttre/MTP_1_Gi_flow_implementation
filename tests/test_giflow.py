@@ -336,6 +336,17 @@ def test_training_signal_and_fp_source():
     check("FP source matches the FP baseline",
           np.allclose(src[0].numpy(), ref, atol=1e-4))
     check("FP source keeps visible entries", torch.allclose(src * cond, x * cond))
+    from giflow.train import FPBlend, TrainConfig, fit_blend_weight
+    kw = dict(n_steps=2, node_mask=val_item["node_mask"][None])
+    model.eval()
+    torch.manual_seed(0)
+    full = FPBlend(model, 1.0).impute(x, cond, **kw)
+    torch.manual_seed(0)
+    check("blend w=1 is the model", torch.allclose(full, model.impute(x, cond, **kw), atol=1e-5))
+    check("blend w=0 is FP", torch.allclose(FPBlend(model, 0.0).impute(x, cond, **kw), src, atol=1e-5))
+    _, val_loader, _ = make_loaders(tr, va, te, batch_size=8)
+    w = fit_blend_weight(model, val_loader, TrainConfig(euler_steps=2), "cpu")
+    check("fitted blend weight lies in [0, 1]", 0.0 <= w <= 1.0, "w=%.3f" % w)
     keys = set(GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, **g).state_dict())
     check("FP operator is not saved, so old checkpoints still load",
           "fp_adj" not in keys)
