@@ -367,3 +367,32 @@ Fitted weights: 0.348 / 0.350 / 0.441.
   longer cap.
 - Still one subject with a window split; the participant-held-out paper setup
   has not been rerun.
+
+### Anchored Flow: per-electrode source mixture (Kaggle T4)
+
+Kernel `anshattre/giflow-seed4-improve`, commit `241265d`, same unfiltered
+one-subject setup as above. `--prior-source mix` starts the flow at a
+per-electrode softmax mixture of heat-kernel, FP and KNN estimates, fit by
+minimising the hidden-entry transport cost; plus `--train-reveal-eval`,
+`--train-keep-range 1 1` and `--blend-fp`.
+
+| Method | NMSE mean +/- std | PCC mean +/- std | PSNR (dB) | SNR (dB) | Per-seed NMSE |
+|---|---:|---:|---:|---:|---|
+| Paper config (A) | 0.4445 +/- 0.0354 | 0.7660 +/- 0.0215 | 24.12 +/- 0.22 | 3.53 +/- 0.34 | 0.4396 / 0.4901 / 0.4039 |
+| FP source + blend (previous best) | 0.3181 +/- 0.0172 | 0.8270 +/- 0.0110 | 25.57 +/- 0.11 | 4.98 +/- 0.23 | 0.2995 / 0.3409 / 0.3138 |
+| Mixture source, flow only | 0.3480 +/- 0.0219 | 0.8179 +/- 0.0098 | 25.18 +/- 0.25 | 4.59 +/- 0.28 | 0.3171 / 0.3615 / 0.3655 |
+| **Mixture source + blend** | **0.2930 +/- 0.0130** | **0.8416 +/- 0.0080** | **25.92 +/- 0.10** | **5.34 +/- 0.19** | 0.2775 / 0.3094 / 0.2921 |
+| KNN | 0.3394 +/- 0.0096 | 0.8153 | | | 0.3356 / 0.3526 / 0.3302 |
+| FP | 0.3360 +/- 0.0185 | 0.8186 | | | 0.3139 / 0.3591 / 0.3350 |
+
+Mean source weights (heat / FP / KNN): 0.13 / 0.42 / 0.45 on every seed.
+Blend weights 0.466 / 0.457 / 0.411.
+
+- Mixture + blend is the best result so far: 7.9% below the previous best,
+  12.8% below FP, 13.7% below KNN and 34.1% below the paper configuration,
+  and better on every seed.
+- The fitted mixture gives the heat-kernel prior only 13% weight; FP and KNN
+  carry most of it.
+- These numbers use unfiltered data. With 0.5-75 Hz band-pass at 200 Hz
+  (commit `d752e25`) the seed-0 baselines fall to KNN 0.2781 / FP 0.2531, so
+  filtered runs are not comparable with this table.
