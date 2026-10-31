@@ -13,8 +13,12 @@ on 50% electrode loss. That is **34.1% below the configuration in our ISBI
 manuscript (0.4445)** and about **13% below the KNN (0.3394) and
 feature-propagation (FP, 0.3360) baselines**.
 
-- It beats every baseline on all three seeds and on all four metrics
+- It beats KNN and FP on all three seeds and on all four metrics
   (NMSE, PCC, PSNR, SNR).
+- **Correction (2026-11-01): it does not beat the spherical spline**, the
+  standard EEG interpolator, which scores 0.2720 on the same setup. KNN and FP
+  were weak baselines. The spline is now both a baseline and a source of the
+  model (step 9 below); results for that version are pending.
 - Most of the gain came from one fix: the model was never trained on the
   electrodes it is scored on. Fixing that alone cut NMSE by 15%.
 - The remaining gains came from starting the flow at a strong classical
@@ -176,6 +180,30 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
 - On a same-subject smoke test it hurt (0.2327 → 0.2435), which is expected;
   its real test is the held-out-participant setup.
 
+### 9. Spherical spline as baseline and mixture source (`--spline`)
+
+- **Finding.** The spherical spline (Perrin et al., 1989), built from the
+  10-05 electrode positions, is far stronger than KNN and FP on this data.
+  KNN and FP use a correlation graph; the spline uses head geometry.
+
+  | Data (one subject, seeds 0–2) | Spherical spline | KNN | FP | Best model so far |
+  | --- | --- | --- | --- | --- |
+  | Unfiltered | **0.2720** (0.2789 / 0.2711 / 0.2661) | 0.3394 | 0.3360 | 0.2930 |
+  | Filtered 0.5–75 Hz, 200 Hz | **0.1430** (0.1360 / 0.1504 / 0.1427) | 0.2843 | 0.2621 | pending |
+
+- **Consequence.** The spline must be in the paper's baseline table; the
+  earlier "beats the baselines" claim only held against KNN and FP.
+- **Change.** Positions come from MNE's 10-05 montage (CB1/CB2 mapped to
+  I1/I2 so all 62 positions are distinct), fitted to a sphere. The spline is
+  scored as a baseline and added as a fourth source of the Anchored Flow
+  mixture; `--blend-with spline` blends the output with the spline.
+- **Smoke test** (filtered, 1 epoch, small subset; not a result): spline
+  0.1664, Anchored Flow with spline source 0.1430, plus spline blend 0.1409.
+  The fitted mixture put 54% of its weight on the spline.
+- **Running:** Kaggle kernel `anshattre/giflow-seed4-spline`, commit
+  `144d638`: one-subject filtered and all-subject held-out filtered, 3 seeds
+  each, with the spline baseline on every seed.
+
 ## What did not help
 
 | Change | Result (NMSE, 3 seeds) | Why |
@@ -245,6 +273,7 @@ Sources:
 | `d752e25` | `--bandpass`, `--resample-hz` |
 | `3a518fe` | `--blend-with` |
 | `f3a3b3c` | `--ensemble`, `--tta-steps` |
+| `144d638` | `--spline`, `--blend-with spline` (spherical spline) |
 
 Data: `data/seed_iv_one.npz` (Kaggle dataset `anshattre/dataset-111`) and
 `data/seed_iv_all.npz` (private Kaggle dataset `anshattre/seed-iv-all-giflow`).
