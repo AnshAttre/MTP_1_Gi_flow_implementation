@@ -342,3 +342,28 @@ Conclusions (one subject, three seeds):
   expose the electrodes that are hidden at test time. This is the
   "electrode fails later" setting (window split) or "electrode missing for a
   new participant" (subject split), and must be stated in the methods.
+
+### FP blend (Kaggle T4)
+
+Kernel `anshattre/giflow-seed4-improve`, commit `77329c4`, same setup as the
+previous section. Both runs use the RF configuration plus `--blend-fp`; the
+blend weight `w` in `w * GiFlow + (1 - w) * FP` is the least-squares fit on the
+validation eval entries, clipped to [0, 1]; the test split is not used to fit it.
+
+| Method | NMSE mean +/- std | PCC mean +/- std | PSNR (dB) | SNR (dB) | Per-seed NMSE |
+|---|---:|---:|---:|---:|---|
+| RF (GiFlow alone) | 0.3538 +/- 0.0195 | 0.8087 +/- 0.0093 | 25.11 +/- 0.09 | 4.52 +/- 0.23 | 0.3401 / 0.3814 / 0.3400 |
+| **RF + FP blend** | **0.3181 +/- 0.0172** | **0.8270 +/- 0.0110** | **25.57 +/- 0.11** | **4.98 +/- 0.23** | 0.2995 / 0.3409 / 0.3138 |
+| KNN | 0.3394 +/- 0.0096 | 0.8153 | | | 0.3356 / 0.3526 / 0.3302 |
+| FP | 0.3360 +/- 0.0185 | 0.8186 | | | 0.3139 / 0.3591 / 0.3350 |
+
+Fitted weights: 0.348 / 0.350 / 0.441.
+
+- The blend beats KNN and FP on every seed: 5.3% lower mean NMSE than FP,
+  6.3% lower than KNN, and higher PCC. Against the paper config (A, 0.4445)
+  it is 28.4% lower.
+- Raising the cap to 150 epochs with patience 15 (`RFB_blend_long`) selected
+  the same epochs (2 / 7 / 2) and gave identical scores; RF does not need a
+  longer cap.
+- Still one subject with a window split; the participant-held-out paper setup
+  has not been rerun.
