@@ -73,6 +73,10 @@ def parse_args(argv=None):
     p.add_argument("--subjects", nargs="*", default=None)
     p.add_argument("--sessions", nargs="*", default=None)
     p.add_argument("--max-windows-per-subject", type=int, default=None)
+    p.add_argument("--bandpass", type=float, nargs=2, default=None, metavar=("LO", "HI"),
+                   help="packed SEED-IV: band-pass each trial, e.g. 0.5 75")
+    p.add_argument("--resample-hz", type=float, default=None,
+                   help="packed SEED-IV: resample each trial, e.g. 200")
     p.add_argument("--max-recordings", type=int, default=None,
                    help="cap MATLAB recordings loaded from a raw SEED-IV tree")
     p.add_argument("--channel-dropout", action="store_true",
@@ -160,6 +164,8 @@ def build(args, seed):
                 max_recordings=args.max_recordings,
                 threshold=args.threshold,
                 channel_dropout=args.channel_dropout,
+                bandpass=tuple(args.bandpass) if args.bandpass else None,
+                resample_hz=args.resample_hz,
             )
         elif name.lower() in ("deap", "deap-raw", "deap_raw"):
             kw = dict(

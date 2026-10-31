@@ -101,6 +101,22 @@ class JointDatasetTests(unittest.TestCase):
         self.assertEqual(bundle.segments, ((0, 2000), (2000, 5000)))
         self.assertEqual(tuple(bundle.segment_group_ids), ("3", "12"))
 
+    def test_packed_seed_iv_bandpass_and_resample_per_trial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "packed.npz"
+            t = np.arange(5000) / 250.0
+            drift = np.tile(5.0 * t, (62, 1))                 # sub-0.5 Hz content
+            alpha = np.tile(np.sin(2 * np.pi * 10 * t), (62, 1))
+            np.savez(path, x=drift + alpha, adj=np.ones((62, 62)),
+                     recordings=np.array(["3/1_x:5"]))
+            bundle = load_seed_iv(path, window=100, verbose=False,
+                                  bandpass=(0.5, 75), resample_hz=200)
+        self.assertEqual(bundle.x.shape, (62, 4000))
+        self.assertEqual(bundle.segments, ((0, 4000),))
+        centre = bundle.x[0].reshape(5, 800)[:, 200:600]
+        self.assertLess(np.abs(centre.mean()), 0.1)            # drift removed
+        self.assertGreater(centre.std(), 0.5)                  # 10 Hz kept
+
     def test_windows_respect_recording_segments(self):
         values = np.ones((2, 30))
         splits = build_splits(

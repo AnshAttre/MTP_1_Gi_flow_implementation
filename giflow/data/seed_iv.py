@@ -94,6 +94,27 @@ def _channel_names(n_channels: int):
     return tuple(SEED_IV_CHANNELS)
 
 
+def _filter_trials(x, trial_len, source_hz, bandpass=None, resample_hz=None):
+    """Band-pass and resample each trial of a (C, n_trials * trial_len) signal.
+
+    Trials are filtered separately because packed X_prc1 windows are separate
+    4 s epochs laid end to end, not one continuous recording.
+    """
+    from fractions import Fraction
+
+    from scipy.signal import butter, resample_poly, sosfiltfilt
+
+    trials = x.reshape(x.shape[0], -1, trial_len).astype(np.float64)
+    if bandpass is not None:
+        low, high = bandpass
+        sos = butter(4, [low, high], btype="band", fs=source_hz, output="sos")
+        trials = sosfiltfilt(sos, trials, axis=2)
+    if resample_hz is not None and resample_hz != source_hz:
+        ratio = Fraction(resample_hz / source_hz).limit_denominator(1000)
+        trials = resample_poly(trials, ratio.numerator, ratio.denominator, axis=2)
+    return trials.reshape(x.shape[0], -1).astype(np.float32), trials.shape[2]
+
+
 def load_seed_iv(
     root: str | Path = "data/seed4",
     window: int = 100,
@@ -105,6 +126,9 @@ def load_seed_iv(
     montage_positions: np.ndarray | None = None,
     channel_dropout: bool = False,
     verbose: bool = True,
+    bandpass: tuple[float, float] | None = None,
+    resample_hz: float | None = None,
+    source_hz: float = 250.0,
 ) -> DatasetBundle:
     """Concatenate SEED-IV windows into one (62, T) signal GiFlow can window over.
 
@@ -117,6 +141,9 @@ def load_seed_iv(
         channel_dropout: if True, mark whole channels missing at random in the
             observed mask, which is the realistic EEG failure mode (a dead
             electrode) rather than scattered point dropout.
+        bandpass / resample_hz: packed files only. Band-pass (Hz) and resample
+            each trial, e.g. (0.5, 75) and 200 as in the EEG super-resolution
+            literature. `source_hz` is the packed sampling rate (X_prc1: 250).
     """
     root = Path(root)
     if window < 1:
@@ -145,11 +172,18 @@ def load_seed_iv(
             counts = [int(r.rsplit(":", 1)[1]) for r in records]
             if sum(counts) and x.shape[1] % sum(counts) == 0:
                 per_window = x.shape[1] // sum(counts)
+                if bandpass is not None or resample_hz is not None:
+                    x, per_window = _filter_trials(
+                        x, per_window, source_hz, bandpass, resample_hz
+                    )
+                    mask = np.ones_like(x, dtype=np.float64)
                 boundaries = np.cumsum([0] + [c * per_window for c in counts])
                 segments = tuple(zip(boundaries[:-1].tolist(), boundaries[1:].tolist()))
                 group_ids = tuple(
                     r.rsplit(":", 1)[0].split("/")[-1].split("_")[0] for r in records
                 )
+        if (bandpass is not None or resample_hz is not None) and segments is None:
+            raise ValueError("--bandpass/--resample-hz need recording metadata in the .npz")
         return DatasetBundle(
             name, x, mask, adj, channel_names=channel_names, segments=segments,
             segment_group_ids=group_ids,
