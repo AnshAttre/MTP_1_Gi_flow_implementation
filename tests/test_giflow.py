@@ -323,6 +323,9 @@ def test_training_signal_and_fp_source():
           and float(before["eval_mask"].sum()) > 0)
     check("reveal-eval keeps the tau-fit mask unchanged",
           torch.equal(after["mask"], before["mask"]))
+    layout_target = after["cond_mask"] - after["mask"] * after["cond_mask"]
+    check("layout-matched training hides exactly the eval electrodes",
+          torch.equal(layout_target, before["eval_mask"]))
     check("validation windows keep the eval mask",
           float(val_item["eval_mask"].sum()) > 0
           and not torch.equal(val_item["cond_mask"], val_item["observed_mask"]))

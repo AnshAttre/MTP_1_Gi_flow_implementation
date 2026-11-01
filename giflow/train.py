@@ -74,6 +74,7 @@ class TrainConfig:
     # training-time extra masking so the model predicts instead of copying
     train_keep_range: tuple = (0.3, 0.9)
     train_channel_drop_prob: float = 0.0
+    train_layout_prob: float = 0.0        # per window: hide exactly the eval electrodes
     train_token_rho_range: tuple = (0.1, 0.9)
     # misc
     seed: int = 0
@@ -522,6 +523,12 @@ def fit(
                     channel_drop_prob=cfg.train_channel_drop_prob,
                     generator=gen,
                 )
+                if cfg.train_layout_prob > 0:
+                    # "mask" keeps the eval layout even when the eval entries are revealed
+                    layout = batch["mask"].to(device) * cond_full
+                    pick = (torch.rand(cond.shape[0], 1, 1, device=device)
+                            < cfg.train_layout_prob).float()
+                    cond = pick * layout + (1.0 - pick) * cond
                 target = cond_full - cond
             if float(target.sum()) == 0:
                 target = cond_full

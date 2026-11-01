@@ -134,6 +134,9 @@ def parse_args(argv=None):
     p.add_argument("--spline", action="store_true",
                    help="score the spherical-spline baseline and add it to the "
                         "--prior-source mix sources (needs MNE for electrode positions)")
+    p.add_argument("--train-layout-prob", type=float, default=0.0,
+                   help="with --train-reveal-eval: probability that a training window hides "
+                        "exactly the evaluation electrodes instead of a random set")
     p.add_argument("--train-reveal-eval", action="store_true",
                    help="train on the eval-hidden entries of training windows; "
                         "validation and test keep the eval mask")
@@ -351,6 +354,7 @@ def main(argv=None):
             srg_lambda_smm=args.srg_lambda_smm,
             clamp_observed_each_step=args.clamp_observed_each_step,
             train_channel_drop_prob=args.train_channel_drop_prob,
+            train_layout_prob=args.train_layout_prob,
             train_token_rho_range=(args.train_token_rho_min, args.train_token_rho_max),
             architecture=(args.architecture or VARIANTS[args.variant].get("architecture", "giflow")),
             token_patch_size=args.token_patch_size,
