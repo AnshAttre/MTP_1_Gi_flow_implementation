@@ -434,3 +434,22 @@ FP 0.2621.
 - On held-out participants validation NMSE was best after epoch 0 on every
   seed and rose afterwards: the flow overfits the training participants.
 - TTA hurt on every seed; the 3-model ensemble gained only 0.5%.
+
+### Step-level validation and regularisation (Kaggle T4)
+
+Kernels `anshattre/giflow-seed4-overfit-a` and `-b`, commit `4d359df`,
+2026-11-01. Same all-subject held-out filtered setup and spline-source
+mixture + spline blend as above, plus `--val-every-steps 100` (patience 8
+checks).
+
+| Variant | Extra flags | Flow only | Blend NMSE mean +/- std | PCC | PSNR (dB) | SNR (dB) | Per-seed blend NMSE | Best step per seed |
+|---|---|---:|---:|---:|---:|---:|---|---|
+| VAL | — | 0.1507 | 0.1450 +/- 0.0062 | 0.9270 | 36.43 | 8.39 | 0.1458 / 0.1521 / 0.1369 | 500 / 600 / 100 |
+| LR | `--lr 1e-4` | 0.1405 | 0.1394 +/- 0.0079 | 0.9295 | 36.60 | 8.56 | 0.1396 / 0.1490 / 0.1296 | 100 / 100 / 100 |
+| **REG** | `--lr 1e-4 --weight-decay 5e-4 --dropout 0.3` | **0.1367** | **0.1357 +/- 0.0071** | **0.9311** | **36.72** | **8.68** | 0.1329 / 0.1454 / 0.1287 | 100 / 100 / 100 |
+| SMALL | `--lr 1e-4 --hidden 32 --layers 2` | 0.1381 | 0.1359 +/- 0.0089 | 0.9309 | 36.71 | 8.68 | 0.1319 / 0.1482 / 0.1276 | 100 / 100 / 100 |
+| Spherical spline | | | 0.1496 +/- 0.0060 | 0.9245 | | | 0.1482 / 0.1576 / 0.1430 | |
+
+REG validation NMSE by step (seed 0): 0.1998 (step 0), 0.1605 (100),
+0.1761 (200), 0.1798 (300), 0.1842 (900). REG beats the spline on every
+seed by 7.7-10.3%; its flow-only output beats the spline as well.

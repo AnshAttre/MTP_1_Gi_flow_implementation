@@ -10,17 +10,23 @@ Last updated: 2026-11-01.
 
 **Headline (2026-11-01, literature-comparable setup).** On all 15 SEED-IV
 subjects, band-passed 0.5–75 Hz at 200 Hz, with participants 7, 10 and 15
-held out, **Anchored Flow with a spherical-spline source + spline blend
-reaches NMSE 0.1452 ± 0.0058 (PCC 0.927)**. The paper configuration scores
-0.3350 on the same setup, so this is **56.7% lower**. It beats the spherical
-spline (0.1496), KNN (0.2905) and FP (0.3216) on every seed, but the margin
-over the spline is small (1.7–3.6% per seed). On one subject (window split)
-it reaches **0.1273 ± 0.0009**, 11% below the spline (0.1430).
+held out, **Anchored Flow with a spherical-spline source, step-level early
+stopping and regularisation reaches NMSE 0.1357 ± 0.0071 (PCC 0.931)**, and
+0.1367 without any blend. That is **9.3% below the spherical spline
+(0.1496)** on every seed and **59.5% below the paper configuration
+(0.3350)**. On one subject (window split) the spline-source model reaches
+0.1273 ± 0.0009, 11% below the spline (0.1430).
 
 | Setup (filtered, 3 seeds) | Paper config | KNN | FP | Spherical spline | **Ours** |
 | --- | --- | --- | --- | --- | --- |
-| All subjects, held-out participants | 0.3350 | 0.2905 | 0.3216 | 0.1496 | **0.1452** |
+| All subjects, held-out participants | 0.3350 | 0.2905 | 0.3216 | 0.1496 | **0.1357** |
 | One subject, window split | — | 0.2843 | 0.2621 | 0.1430 | **0.1273** |
+
+Most of the distance from the paper configuration comes from starting the
+flow at the spline (a 1989 method that alone beats the original GiFlow by
+55%); the flow's own contribution is the further 9% over the spline. Whether
+a plain regression network on top of the spline would match it is still
+open (see next steps).
 
 Earlier development results (one subject, unfiltered): Anchored Flow + FP
 blend reached 0.2930 ± 0.0130, 34.1% below the manuscript configuration
@@ -140,6 +146,35 @@ Observations:
   KNN 0.14–0.18, spline 0.54–0.56.
 - The ensemble of three gave only −0.5%; test-time adaptation made things
   worse (see "What did not help").
+
+### Fixing cross-participant overfitting (`--val-every-steps`)
+
+Validation was checked only at the end of each epoch (~330 steps), by which
+point the flow had already overfit the training participants. With
+`--val-every-steps 100` the best checkpoint is chosen within the epoch
+(validation also runs before training, at step 0). Same setup and spline
+source as above, seeds 0–2, commit `4d359df`.
+
+| Variant | Flow only | + spline blend | PCC | PSNR (dB) | SNR (dB) | Per-seed NMSE (blend) | Blend w |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Epoch-level validation (before) | 0.1511 | 0.1452 ± 0.0058 | 0.9268 | 36.42 | 8.38 | 0.1457 / 0.1521 / 0.1379 | 0.25 / 0.40 / 0.54 |
+| VAL: step validation, lr 1e-3 | 0.1507 | 0.1450 ± 0.0062 | 0.9270 | 36.43 | 8.39 | 0.1458 / 0.1521 / 0.1369 | 0.24 / 0.39 / 0.58 |
+| LR: + lr 1e-4 | 0.1405 | 0.1394 ± 0.0079 | 0.9295 | 36.60 | 8.56 | 0.1396 / 0.1490 / 0.1296 | 0.60 / 0.54 / 0.87 |
+| **REG: + weight decay 5e-4, dropout 0.3** | **0.1367** | **0.1357 ± 0.0071** | **0.9311** | **36.72** | **8.68** | 0.1329 / 0.1454 / 0.1287 | 0.78 / 0.67 / 0.80 |
+| SMALL: lr 1e-4, hidden 32, 2 layers | 0.1381 | 0.1359 ± 0.0089 | 0.9309 | 36.71 | 8.68 | 0.1319 / 0.1482 / 0.1276 | 0.85 / 0.55 / 0.82 |
+| Spherical spline | — | 0.1496 ± 0.0060 | 0.9245 | — | — | 0.1482 / 0.1576 / 0.1430 | — |
+
+- Step validation alone does nothing at lr 1e-3: the validation curve is
+  flat from step 100. The gain comes from the lower learning rate (−3.9%)
+  plus regularisation (−2.7%).
+- With lr 1e-4, validation NMSE is best at step 100 on every seed and rises
+  afterwards (seed 0, REG: 0.1998 at step 0, 0.1605 at step 100, 0.1842 at
+  step 900).
+- The flow now beats the spline without any blend (0.1367 vs 0.1496), and
+  the blend gives the model most of the weight (0.67–0.80).
+- Test NMSE (0.137) is below validation NMSE (0.16–0.19), so the selected
+  checkpoint is not overfit to the test participants; validation
+  participants 6 and 12 are simply harder.
 
 ## What each improvement does
 
@@ -310,10 +345,13 @@ Sources:
 
 - **Done:** all-subject held-out runs for the paper configuration, Anchored
   Flow + blend, ensemble, TTA and the spline source (tables above).
-- **Next:** reduce cross-participant overfitting, since validation NMSE is
-  best after one epoch: lower learning rate, stronger regularisation, or
-  validation checks within the first epoch. The flow should add more on top
-  of the spline than the current 3%.
+- **Done:** cross-participant overfitting fix (0.1452 → 0.1357).
+- **Running:** validation every 25 steps, with and without layout-matched
+  training (`--train-layout-prob 0.5`, commit `e74c5d7`; Kaggle kernel
+  `anshattre/giflow-seed4-overfit-c`).
+- **Next:** a non-generative control (same network regressing the spline
+  residual, no flow) to show the gain comes from flow matching; uncertainty
+  from multiple flow samples versus error, which the spline cannot provide.
 - **Then:** match the literature protocol fully (fixed electrode layout,
   4 s windows via the channel-token architecture), add electrode
   coordinates, run five seeds, and rerun on the raw DEAP + SEED-IV data used
@@ -332,6 +370,8 @@ Sources:
 | `3a518fe` | `--blend-with` |
 | `f3a3b3c` | `--ensemble`, `--tta-steps` |
 | `144d638` | `--spline`, `--blend-with spline` (spherical spline) |
+| `4d359df` | `--val-every-steps` (step-level validation and early stopping) |
+| `e74c5d7` | `--train-layout-prob` (layout-matched training) |
 
 Data: `data/seed_iv_one.npz` (Kaggle dataset `anshattre/dataset-111`) and
 `data/seed_iv_all.npz` (private Kaggle dataset `anshattre/seed-iv-all-giflow`).
