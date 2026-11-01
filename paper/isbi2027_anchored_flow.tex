@@ -265,14 +265,39 @@ electrodes, outperforms all learned models we tested. EEG reconstruction
 studies, including diffusion-based ones, should report such baselines under
 a shared NMSE definition.
 
-\textbf{Joint training.} An earlier pilot with a different protocol (raw
-DEAP \cite{koelstra2012deap} and SEED-IV recordings aligned to a shared
-62-electrode space, 25 windows per participant, heat-kernel source, one
-seed) trained GiFlow on both datasets jointly. Joint training lowered NMSE
-relative to single-dataset training (DEAP 0.633 to 0.592; SEED-IV 0.757 to
-0.633), but neither GiFlow nor an SRG-flow variant beat $k$-nearest-neighbour
-interpolation (0.593 and 0.611), in line with the findings above. Joint
-training with anchored sources is left for future work.
+\begin{table}[t]
+\centering
+\caption{Earlier joint-training pilot (different protocol: raw DEAP and
+SEED-IV, shared 62-electrode space, 25 windows per participant,
+heat-kernel source, one seed). NMSE, participant-held-out 50\% electrode
+loss; lower is better.}
+\label{tab:joint}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccc}
+\toprule
+Method & DEAP & SEED-IV & Macro\\
+\midrule
+Joint GiFlow & 0.5920 & 0.6333 & 0.6127\\
+Joint SRG-flow & 0.5979 & 0.6416 & 0.6198\\
+Joint KNN & 0.5931 & 0.6113 & 0.6022\\
+Joint feature propagation & 0.6052 & 0.6506 & 0.6279\\
+Single-dataset GiFlow & 0.6325 & 0.7571 & --\\
+Single-dataset SRG-flow & 0.8456 & 0.7216 & --\\
+Single-dataset KNN & 0.5964 & 0.6097 & --\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Joint training.} An earlier pilot (Table~\ref{tab:joint}) trained
+GiFlow and an SRG-flow variant on raw DEAP \cite{koelstra2012deap} and
+SEED-IV jointly, aligning both to a shared 62-electrode space with
+dataset-specific normalization. Joint training lowered NMSE relative to
+single-dataset training for both learned models (GiFlow: DEAP 0.633 to
+0.592, SEED-IV 0.757 to 0.633), but neither beat $k$-nearest-neighbour
+interpolation on the macro average, in line with the findings above. Joint
+training also changed the estimated graph, so the gain cannot be attributed
+to the extra data alone. Joint training with anchored sources is left for
+future work.
 
 \textbf{Limitations.} One dataset with random electrode subsets, short
 (0.5~s) windows, three seeds and three test participants; differences of
