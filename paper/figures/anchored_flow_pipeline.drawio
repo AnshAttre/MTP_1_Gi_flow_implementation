@@ -1,0 +1,93 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="anchored-flow" name="Anchored Flow pipeline">
+    <mxGraphModel dx="1400" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Input -->
+        <mxCell id="in" value="&lt;b&gt;Input EEG window&lt;/b&gt;&lt;br&gt;62 electrodes x 100 samples&lt;br&gt;31 visible, 31 failed (hidden)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="20" y="300" width="190" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Classical sources group -->
+        <mxCell id="grp" value="&lt;b&gt;Classical estimates of the hidden electrodes&lt;/b&gt;" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=13;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="260" y="120" width="260" height="450" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="Heat kernel (GiFlow prior)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=12;" vertex="1" parent="grp">
+          <mxGeometry x="20" y="45" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="Feature propagation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=12;" vertex="1" parent="grp">
+          <mxGeometry x="20" y="125" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="k-nearest neighbours" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=12;" vertex="1" parent="grp">
+          <mxGeometry x="20" y="205" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="Spherical spline&lt;br&gt;(10-05 electrode positions)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="grp">
+          <mxGeometry x="20" y="285" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="Covariance kriging&lt;br&gt;(training participants,&lt;br&gt;re-weighted per new participant)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="grp">
+          <mxGeometry x="20" y="365" width="220" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- Mixture -->
+        <mxCell id="mix" value="&lt;b&gt;Anchored source X&lt;sub&gt;0&lt;/sub&gt;&lt;/b&gt;&lt;br&gt;per-electrode softmax mixture&lt;br&gt;weights fit by minimising&lt;br&gt;transport cost E||X - X&lt;sub&gt;0&lt;/sub&gt;||&lt;sup&gt;2&lt;/sup&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="570" y="285" width="210" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Vector field -->
+        <mxCell id="vf" value="&lt;b&gt;GiFlow vector field&lt;/b&gt;&lt;br&gt;spatial + temporal attention,&lt;br&gt;graph message passing&lt;br&gt;10 Euler steps, t: 0 to 1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="830" y="285" width="200" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Blend -->
+        <mxCell id="bl" value="&lt;b&gt;Blend&lt;/b&gt;&lt;br&gt;w * model + (1 - w) * reference&lt;br&gt;w fit on validation participants" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="295" width="190" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Output -->
+        <mxCell id="out" value="&lt;b&gt;Reconstructed EEG&lt;/b&gt;&lt;br&gt;all 62 electrodes&lt;br&gt;(visible ones kept as recorded)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1085" y="470" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Training notes -->
+        <mxCell id="train" value="&lt;b&gt;Training fixes&lt;/b&gt;&lt;br&gt;1. Full-montage training: scored electrodes are&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;visible in training windows and used as targets&lt;br&gt;2. Step-level early stopping (every 25-100 steps)&lt;br&gt;3. lr 1e-4, weight decay 5e-4, dropout 0.3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="740" y="470" width="320" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Title -->
+        <mxCell id="title" value="&lt;b&gt;Anchored Flow for EEG electrode recovery&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="420" y="40" width="560" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: input to each source -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="in" target="s1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="in" target="s2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="in" target="s3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="in" target="s4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="in" target="s5"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- sources to mixture -->
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="s1" target="mix"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="s2" target="mix"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="s3" target="mix"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="s4" target="mix"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="s5" target="mix"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- main path -->
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="mix" target="vf"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="vf" target="bl"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="bl" target="out"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- reference estimate into blend (dashed, from kriging/spline) -->
+        <mxCell id="e14" value="reference (spline or kriging)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;fontSize=11;" edge="1" parent="1" source="grp" target="bl">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="390" y="100" />
+              <mxPoint x="1175" y="100" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <!-- training note to vector field -->
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="train" target="vf"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
