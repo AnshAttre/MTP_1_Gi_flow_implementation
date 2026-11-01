@@ -265,6 +265,15 @@ electrodes, outperforms all learned models we tested. EEG reconstruction
 studies, including diffusion-based ones, should report such baselines under
 a shared NMSE definition.
 
+\textbf{Joint training.} An earlier pilot with a different protocol (raw
+DEAP \cite{koelstra2012deap} and SEED-IV recordings aligned to a shared
+62-electrode space, 25 windows per participant, heat-kernel source, one
+seed) trained GiFlow on both datasets jointly. Joint training lowered NMSE
+relative to single-dataset training (DEAP 0.633 to 0.592; SEED-IV 0.757 to
+0.633), but neither GiFlow nor an SRG-flow variant beat $k$-nearest-neighbour
+interpolation (0.593 and 0.611), in line with the findings above. Joint
+training with anchored sources is left for future work.
+
 \textbf{Limitations.} One dataset with random electrode subsets, short
 (0.5~s) windows, three seeds and three test participants; differences of
 about 2\% (e.g., flow versus regression control) are within seed variation.

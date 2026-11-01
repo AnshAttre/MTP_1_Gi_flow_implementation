@@ -302,6 +302,15 @@ electrodes, outperforms all learned models we tested. EEG reconstruction
 studies, including diffusion-based ones, should report such baselines under
 a shared NMSE definition.
 
+\textbf{Joint training.} An earlier pilot with a different protocol (raw
+DEAP \cite{koelstra2012deap} and SEED-IV recordings aligned to a shared
+62-electrode space, 25 windows per participant, heat-kernel source, one
+seed) trained GiFlow on both datasets jointly. Joint training lowered NMSE
+relative to single-dataset training (DEAP 0.633 to 0.592; SEED-IV 0.757 to
+0.633), but neither GiFlow nor an SRG-flow variant beat $k$-nearest-neighbour
+interpolation (0.593 and 0.611), in line with the findings above. Joint
+training with anchored sources is left for future work.
+
 \textbf{Limitations.} One dataset with random electrode subsets, short
 (0.5~s) windows, three seeds and three test participants; differences of
 about 2\% (e.g., flow versus regression control) are within seed variation.
@@ -364,6 +373,12 @@ M.~M. Bronstein,
 ``On the unreasonable effectiveness of feature propagation in learning on
 graphs with missing node features,''
 in \emph{Learning on Graphs Conference}, 2022.
+
+\bibitem{koelstra2012deap}
+S.~Koelstra, C.~M{\"u}hl, M.~Soleymani, J.-S. Lee, A.~Yazdani, T.~Ebrahimi,
+T.~Pun, A.~Nijholt, and I.~Patras,
+``DEAP: A database for emotion analysis using physiological signals,''
+\emph{IEEE Transactions on Affective Computing}, vol.~3, no.~1, pp.~18--31, 2012.
 
 \bibitem{cressie1993statistics}
 N.~A.~C. Cressie, \emph{Statistics for Spatial Data}, revised ed.,
