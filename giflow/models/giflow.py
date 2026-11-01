@@ -200,6 +200,8 @@ class GiFlow(nn.Module):
             use_propagation=use_propagation,
         )
         self.clamp_observed_each_step = clamp_observed_each_step
+        # control: one-step regression of X_1 - X_0 at t = 0 (same network, no flow)
+        self.regression = False
         self.use_srg_guidance = use_srg_guidance
         self.srg_lambda_res = srg_lambda_res
         self.srg_lambda_smm = srg_lambda_smm
@@ -301,7 +303,10 @@ class GiFlow(nn.Module):
         x_cond = x_true * cond_mask
         x0 = self.source_sample(x_cond, cond_mask, node_mask)
         b = x_true.shape[0]
-        t = torch.rand(b, device=x_true.device)
+        if self.regression:
+            t = torch.zeros(b, device=x_true.device)
+        else:
+            t = torch.rand(b, device=x_true.device)
         t_b = t.view(b, 1, 1)
         x_t = (1.0 - t_b) * x0 + t_b * x_true
         u_t = x_true - x0                                  # Eq. (10)
@@ -369,6 +374,8 @@ class GiFlow(nn.Module):
         x = self.source_sample(x_cond, cond_mask, node_mask)
         if noise_std > 0:
             x = x + noise_std * torch.randn_like(x)
+        if self.regression:
+            n_steps = 1
         dt = 1.0 / n_steps
         for i in range(n_steps):
             t = torch.full((x.shape[0],), i * dt, device=x.device)

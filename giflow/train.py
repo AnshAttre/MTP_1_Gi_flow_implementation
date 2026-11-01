@@ -75,6 +75,7 @@ class TrainConfig:
     train_keep_range: tuple = (0.3, 0.9)
     train_channel_drop_prob: float = 0.0
     train_layout_prob: float = 0.0        # per window: hide exactly the eval electrodes
+    regression_control: bool = False      # same network as a one-step residual regressor
     train_token_rho_range: tuple = (0.1, 0.9)
     # misc
     seed: int = 0
@@ -397,6 +398,7 @@ def fit(
         srg_lambda_res=cfg.srg_lambda_res,
         srg_lambda_smm=cfg.srg_lambda_smm,
         ).to(device)
+        model.regression = cfg.regression_control
 
     history = {
         "tau": None, "epochs": [], "config": asdict(cfg),

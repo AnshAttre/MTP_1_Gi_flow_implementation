@@ -137,6 +137,9 @@ def parse_args(argv=None):
     p.add_argument("--train-layout-prob", type=float, default=0.0,
                    help="with --train-reveal-eval: probability that a training window hides "
                         "exactly the evaluation electrodes instead of a random set")
+    p.add_argument("--regression-control", action="store_true",
+                   help="control: train the same network to regress X_1 - X_0 in one step "
+                        "(t = 0, one Euler step) instead of flow matching")
     p.add_argument("--train-reveal-eval", action="store_true",
                    help="train on the eval-hidden entries of training windows; "
                         "validation and test keep the eval mask")
@@ -355,6 +358,7 @@ def main(argv=None):
             clamp_observed_each_step=args.clamp_observed_each_step,
             train_channel_drop_prob=args.train_channel_drop_prob,
             train_layout_prob=args.train_layout_prob,
+            regression_control=args.regression_control,
             train_token_rho_range=(args.train_token_rho_min, args.train_token_rho_max),
             architecture=(args.architecture or VARIANTS[args.variant].get("architecture", "giflow")),
             token_patch_size=args.token_patch_size,

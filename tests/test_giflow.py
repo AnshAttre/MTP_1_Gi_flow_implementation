@@ -339,6 +339,15 @@ def test_training_signal_and_fp_source():
     check("FP source matches the FP baseline",
           np.allclose(src[0].numpy(), ref, atol=1e-4))
     check("FP source keeps visible entries", torch.allclose(src * cond, x * cond))
+    model.eval()
+    model.regression = True
+    one = model.impute(x, cond, n_steps=1)
+    check("regression control takes one step at t = 0",
+          torch.allclose(model.impute(x, cond, n_steps=10), one))
+    v0 = model.vector_field(src, x * cond, cond, torch.zeros(1), None, None)
+    check("regression control output is source + v(source, 0)",
+          torch.allclose(one, cond * x + (1 - cond) * (src + v0), atol=1e-5))
+    model.regression = False
     from giflow.train import FPBlend, TrainConfig, fit_blend_weight
     kw = dict(n_steps=2, node_mask=val_item["node_mask"][None])
     model.eval()
