@@ -85,6 +85,9 @@ def parse_args(argv=None):
     # optimisation
     p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--patience", type=int, default=10)
+    p.add_argument("--val-every-steps", type=int, default=0,
+                   help="validate every N optimiser steps (and before training) instead of "
+                        "every epoch; patience then counts these checks")
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=5e-5)
@@ -341,6 +344,7 @@ def main(argv=None):
             batch_size=args.batch_size,
             max_epochs=args.epochs,
             patience=args.patience,
+            val_every_steps=args.val_every_steps,
             euler_steps=args.euler_steps,
             preservation_weight=args.preservation_weight,
             srg_lambda_res=args.srg_lambda_res,

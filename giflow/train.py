@@ -81,6 +81,7 @@ class TrainConfig:
     num_workers: int = 0
     log_every: int = 1
     eval_every: int = 1
+    val_every_steps: int = 0              # >0: validate every N steps and at step 0
     out_dir: str = "runs/default"
     threads: int | None = None
 
@@ -474,6 +475,27 @@ def fit(
     ckpt = out_dir / "best.pt"
     t_start = time.time()
 
+    def validate(epoch, step):
+        nonlocal best, bad
+        val = evaluate(
+            ema.module(), val_loader, scaler, cfg, device,
+            dataset_names=history.get("dataset_names"),
+        )
+        if val["nmse"] < best["nmse"] - 1e-6:
+            best = {"nmse": val["nmse"], "epoch": epoch, "step": step}
+            torch.save(ema.module().state_dict(), ckpt)
+            bad = 0
+        else:
+            bad += 1
+        return val
+
+    step = 0
+    if cfg.val_every_steps:
+        # step 0 scores the untrained flow, i.e. close to its source
+        history["step_vals"] = [{"step": 0, "nmse": validate(-1, 0)["nmse"]}]
+        if verbose:
+            print("step %6d | val NMSE %.4f (before training)" % (0, history["step_vals"][0]["nmse"]))
+
     for epoch in range(cfg.max_epochs):
         model.train()
         tot, flow_tot, preservation_tot, residual_tot, smm_tot, nb = 0.0, 0.0, 0.0, 0.0, 0.0, 0
@@ -523,12 +545,22 @@ def fit(
                 torch.nn.utils.clip_grad_norm_(params, cfg.grad_clip)
             opt.step()
             ema.update(model)
+            step += 1
             tot += float(loss.detach())
             flow_tot += float(components["flow_loss"].detach())
             preservation_tot += float(components["preservation_loss"].detach())
             residual_tot += float(components["residual_loss"].detach())
             smm_tot += float(components["smm_regularization"].detach())
             nb += 1
+            if cfg.val_every_steps and step % cfg.val_every_steps == 0:
+                v = validate(epoch, step)
+                history["step_vals"].append({"step": step, "nmse": v["nmse"]})
+                model.train()
+                if verbose:
+                    print("step %6d | val NMSE %.4f | patience %d/%d"
+                          % (step, v["nmse"], bad, cfg.patience))
+                if bad >= cfg.patience:
+                    break
         train_loss = tot / max(nb, 1)
         flow_loss = flow_tot / max(nb, 1)
         preservation_loss = preservation_tot / max(nb, 1)
@@ -543,18 +575,8 @@ def fit(
             "smm_regularization": smm_tot / max(nb, 1),
             "seconds": epoch_time,
         }
-        if (epoch + 1) % cfg.eval_every == 0:
-            val = evaluate(
-                ema.module(), val_loader, scaler, cfg, device,
-                dataset_names=history.get("dataset_names"),
-            )
-            rec["val"] = val
-            if val["nmse"] < best["nmse"] - 1e-6:
-                best = {"nmse": val["nmse"], "epoch": epoch}
-                torch.save(ema.module().state_dict(), ckpt)
-                bad = 0
-            else:
-                bad += 1
+        if not cfg.val_every_steps and (epoch + 1) % cfg.eval_every == 0:
+            rec["val"] = validate(epoch, step)
         history["epochs"].append(rec)
         if verbose and (epoch % cfg.log_every == 0):
             v = rec.get("val", {})
@@ -571,7 +593,8 @@ def fit(
             )
         if bad >= cfg.patience:
             if verbose:
-                print("[early stop] no val improvement for %d epochs" % cfg.patience)
+                print("[early stop] no val improvement for %d %s"
+                      % (cfg.patience, "checks" if cfg.val_every_steps else "epochs"))
             break
 
     history["train_seconds"] = time.time() - t_start
