@@ -40,8 +40,14 @@ regression control" below):**
    band, reaches 0.1142 (0.1196 for the variant selected on validation).
    Neither uses the hidden electrodes of test participants.
 
-Kriging is now a baseline and a GiFlow source (`--cov-source`,
-`--adapt-cov`); the GiFlow run on top of it is pending.
+3. **With kriging as its source, the flow adds nothing** (kernel
+   `anshattre/giflow-seed4-cov`, commit `5d52295`). The mixture gives kriging
+   99% of the weight; the flow alone scores 0.1300 vs kriging 0.1265
+   (one participant: 0.0849 vs 0.0830), and the validation-fitted blend
+   weights (0 / 0 / 0.30) return the kriging estimate (0.1266). With
+   per-participant covariance weighting at test time: flow 0.1188, blend
+   0.1161, kriging alone 0.1160 (per seed 0.1110 / 0.1285 / 0.1085,
+   PCC 0.940).
 
 Earlier development results (one subject, unfiltered): Anchored Flow + FP
 blend reached 0.2930 ± 0.0130, 34.1% below the manuscript configuration

@@ -34,9 +34,10 @@ spline, covariance kriging), and step-level early stopping, reducing NMSE by
 59\% to 0.136 and beating the spline on every seed. Two controls temper this
 gain: a non-generative network with the same source matches the flow
 (0.133), and a linear kriging predictor that weights training participants by
-the similarity of their visible-electrode correlations reaches 0.114. We
-argue that EEG reconstruction models should be compared against such tuned
-linear baselines.
+the similarity of their visible-electrode correlations reaches 0.114. Given
+kriging as its source, the flow no longer improves on it (0.116 vs 0.116).
+We argue that EEG reconstruction models should be compared against such
+tuned linear baselines.
 \end{abstract}
 
 \begin{keywords}
@@ -160,7 +161,7 @@ only.
 \caption{Participant-held-out 50\% electrode loss on SEED-IV (3 seeds).
 Lower NMSE and higher PCC are better. Learned models are blended with their
 reference estimate (model alone in Table~\ref{tab:ablation}).
-$^\dagger$Selected on validation.}
+$^\dagger$Selected on validation. --: not computed.}
 \label{tab:main}
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{lcc}
@@ -171,15 +172,17 @@ Method & NMSE & PCC\\
 KNN & 0.2905 $\pm$ 0.0069 & 0.846\\
 Feature propagation & 0.3216 $\pm$ 0.0076 & 0.835\\
 Spherical spline & 0.1496 $\pm$ 0.0060 & 0.925\\
-Kriging, pooled covariance & 0.1265 $\pm$ 0.0094 & \tbd{--}\\
-Kriging, participant-weighted, per band$^\dagger$ & 0.1196 $\pm$ 0.0065 & \tbd{--}\\
-\quad (same, without spline average) & 0.1142 $\pm$ 0.0075 & \tbd{--}\\
+Kriging, pooled covariance & 0.1265 $\pm$ 0.0095 & 0.935\\
+Kriging, participant-weighted & 0.1160 $\pm$ 0.0089 & 0.940\\
+Kriging, participant-weighted, per band$^\dagger$ & 0.1196 $\pm$ 0.0065 & --\\
+\quad (same, without spline average) & 0.1142 $\pm$ 0.0075 & --\\
 \midrule
 \multicolumn{3}{l}{\emph{Learned}}\\
 GiFlow (published hyperparameters) & 0.3350 $\pm$ 0.0183 & 0.820\\
 Anchored Flow, spline source & 0.1357 $\pm$ 0.0071 & 0.931\\
 Regression control (same net, no flow) & 0.1332 $\pm$ 0.0084 & 0.931\\
-Anchored Flow, spline + kriging source & \tbd{TBD} & \tbd{TBD}\\
+Anchored Flow, spline + kriging source & 0.1266 $\pm$ 0.0095 & 0.935\\
+\quad + participant-weighted kriging & 0.1161 $\pm$ 0.0088 & 0.940\\
 SRG-flow \cite{liu2026srgdiff}-style, same source & \tbd{TBD} & \tbd{TBD}\\
 \bottomrule
 \end{tabular}
@@ -231,8 +234,17 @@ iterative transport adds nothing measurable to a single learned correction.
 reaches 0.1142 (0.1196 for the variant preferred on validation), below
 every learned model above. On a single participant with a time split, where
 covariances transfer exactly, kriging reaches $0.083\pm0.006$ against the
-spline's $0.143\pm0.006$. Anchored Flow with kriging in its source gives
-\tbd{TBD}.
+spline's $0.143\pm0.006$.
+
+\textbf{The flow cannot improve on kriging.} With kriging in the anchored
+source, the fitted mixture gives it 99\% of the weight. The flow alone is
+then slightly worse than kriging (0.1300 vs 0.1265; on one participant
+0.0849 vs 0.0830), and the validation-fitted blend weights (0, 0, 0.30)
+essentially return the kriging estimate (0.1266). Re-weighting the
+kriging covariance per test participant gives the same picture: 0.1188 for
+the flow, 0.1161 blended, and 0.1160 for the kriging alone. Once the source
+is the best linear predictor, the network learns no correction that
+transfers to new participants.
 
 \section{Discussion}
 
@@ -263,9 +275,9 @@ diffusion models under our protocol.
 Anchoring GiFlow to classical estimates, training on the full montage and
 stopping early cut NMSE by 59\% and beat spherical-spline interpolation for
 held-out participants, but a non-generative control and a
-participant-weighted kriging baseline perform as well or better. Strong,
-tuned linear baselines are essential when evaluating learned EEG
-reconstruction.
+participant-weighted kriging baseline perform as well or better, and with
+kriging as its source the flow adds nothing. Strong, tuned linear baselines
+are essential when evaluating learned EEG reconstruction.
 
 \section*{Compliance with Ethical Standards}
 This study used the publicly available SEED-IV dataset
