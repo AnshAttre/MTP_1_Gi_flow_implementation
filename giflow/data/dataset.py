@@ -343,12 +343,15 @@ def reveal_eval_in_training(train_ds) -> None:
         ds.reveal_eval = True
 
 
-def training_covariance(train_ds, max_windows: int = 5000) -> np.ndarray:
+def training_covariance(train_ds, max_windows: int = 5000, by_group: bool = False):
     """(N, N) second-moment matrix of the normalised training signal over all
     electrodes, including the evaluation ones (training participants have them).
 
     Pairs are averaged over samples where both electrodes are genuinely observed.
+    With `by_group`, returns one matrix per training participant instead.
     """
+    if by_group:
+        return _covariance_by_group(train_ds, max_windows)
     total, count = 0.0, 0.0
     for ds in getattr(train_ds, "datasets", [train_ds]):
         starts = np.asarray(ds.indices)
@@ -361,6 +364,26 @@ def training_covariance(train_ds, max_windows: int = 5000) -> np.ndarray:
             total = total + x @ x.T
             count = count + obs @ obs.T
     return total / np.maximum(count, 1.0)
+
+
+
+def _covariance_by_group(train_ds, max_windows):
+    sums = {}
+    for ds in getattr(train_ds, "datasets", [train_ds]):
+        if ds.group_ids is None:
+            raise ValueError("per-participant covariances need participant IDs")
+        for group in sorted(set(map(str, ds.group_ids))):
+            starts = np.asarray(ds.indices)[np.asarray(list(map(str, ds.group_ids))) == group]
+            if len(starts) > max_windows:
+                starts = starts[np.linspace(0, len(starts) - 1, max_windows).round().astype(int)]
+            total, count = sums.get(group, (0.0, 0.0))
+            for s in starts:
+                sl = slice(int(s), int(s) + ds.window)
+                obs = ds.observed_mask[:, sl]
+                x = ds.scaler.transform(ds.x[:, sl]) * obs
+                total, count = total + x @ x.T, count + obs @ obs.T
+            sums[group] = (total, count)
+    return {g: t / np.maximum(c, 1.0) for g, (t, c) in sums.items()}
 
 
 def make_loaders(train_ds, val_ds, test_ds, batch_size: int = 32, num_workers: int = 0):

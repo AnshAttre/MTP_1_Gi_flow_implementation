@@ -76,6 +76,7 @@ class TrainConfig:
     train_channel_drop_prob: float = 0.0
     train_layout_prob: float = 0.0        # per window: hide exactly the eval electrodes
     regression_control: bool = False      # same network as a one-step residual regressor
+    adapt_cov_temp: float = 0.0           # >0: per-participant covariance source at test
     train_token_rho_range: tuple = (0.1, 0.9)
     # misc
     seed: int = 0
@@ -340,6 +341,7 @@ def fit(
     verbose: bool = True,
     spline_positions=None,
     cov_matrix=None,
+    subject_covs=None,
 ):
     """Run the full pipeline: tau optimisation, then flow-matching training.
 
@@ -664,5 +666,20 @@ def fit(
                     % (name, cfg.tta_steps, res["pcc"], res["nmse"], res["psnr"], res["snr"],
                        time.time() - t0)
                 )
+    if cfg.adapt_cov_temp > 0 and subject_covs and hasattr(eval_model, "cov_k"):
+        from .adapt import evaluate_adapted_cov
+
+        for split_name, ds in (("val", val_ds), ("test", test_ds)):
+            res = evaluate_adapted_cov(
+                eval_model, ds, scaler, cfg, device, subject_covs, cfg.adapt_cov_temp,
+                history.get("blend_weight"),
+            )
+            for name, metrics in res.items():
+                key = "%s_adaptcov%s" % (split_name, "" if name == "model" else "_" + name)
+                history[key] = metrics
+                if verbose:
+                    print("[%s adapted cov, %s] PCC %.4f  NMSE %.4f  PSNR %.2f dB  SNR %.2f dB"
+                          % (split_name, name, metrics["pcc"], metrics["nmse"],
+                             metrics["psnr"], metrics["snr"]))
     (out_dir / "history.json").write_text(json.dumps(history, indent=2, default=str))
     return model, eval_model, history

@@ -136,6 +136,9 @@ def parse_args(argv=None):
     p.add_argument("--cov-source", action="store_true",
                    help="score a kriging baseline from the training-electrode covariance and "
                         "add it to the source mixture (needs --train-reveal-eval)")
+    p.add_argument("--adapt-cov", type=float, default=0.0, metavar="TEMP",
+                   help="with --cov-source: at test time re-weight training-participant "
+                        "covariances per new participant (temperature TEMP, e.g. 0.5)")
     p.add_argument("--spline", action="store_true",
                    help="score the spherical-spline baseline and add it to the "
                         "--prior-source mix sources (needs MNE for electrode positions)")
@@ -333,6 +336,11 @@ def main(argv=None):
             if len(bundles) > 1 or not args.train_reveal_eval:
                 raise ValueError("--cov-source needs a single dataset and --train-reveal-eval")
             cov = training_covariance(splits[0])
+        subject_covs = None
+        if args.adapt_cov > 0:
+            if cov is None:
+                raise ValueError("--adapt-cov needs --cov-source")
+            subject_covs = training_covariance(splits[0], by_group=True)
 
         if not args.skip_baselines:
             _, _, test_loader = make_loaders(*splits, batch_size=args.batch_size)
@@ -371,6 +379,7 @@ def main(argv=None):
             train_channel_drop_prob=args.train_channel_drop_prob,
             train_layout_prob=args.train_layout_prob,
             regression_control=args.regression_control,
+            adapt_cov_temp=args.adapt_cov,
             train_token_rho_range=(args.train_token_rho_min, args.train_token_rho_max),
             architecture=(args.architecture or VARIANTS[args.variant].get("architecture", "giflow")),
             token_patch_size=args.token_patch_size,
@@ -401,7 +410,8 @@ def main(argv=None):
             graphs["adj_s_norm"], graphs["adj_t_norm"], splits, scaler,
         )
         fit_kw = dict(n_timestamp_classes=bundles[0].ts_classes, dataset_names=dataset_labels,
-                      spline_positions=spline_pos, cov_matrix=cov)
+                      spline_positions=spline_pos, cov_matrix=cov,
+                      subject_covs=subject_covs)
         _, eval_model, hist = fit(*fit_args, cfg, **fit_kw)
         if args.ensemble > 1:
             members = [eval_model]
@@ -448,7 +458,9 @@ def main(argv=None):
                  [round(h["blend_weight"], 3) for h in histories]))
         summary.update(aggregate_blend=blend_agg, trials_blend=blend_trials,
                        blend_weights=[h["blend_weight"] for h in histories])
-    for key in ("test_tta", "test_tta_blend", "test_ensemble", "test_ensemble_blend"):
+    for key in ("test_tta", "test_tta_blend", "test_ensemble", "test_ensemble_blend",
+                "test_adaptcov", "test_adaptcov_blend", "test_adaptcov_reference",
+                "val_adaptcov", "val_adaptcov_blend", "val_adaptcov_reference"):
         extra = [h[key] for h in histories if key in h]
         if extra:
             extra_agg = aggregate_trials(extra)

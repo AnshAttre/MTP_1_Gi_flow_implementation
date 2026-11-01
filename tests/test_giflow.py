@@ -512,6 +512,21 @@ def test_covariance_source():
     mix = GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, prior_source="mix", cov_matrix=cov_tr, **g)
     check("mixture gains a covariance source", mix.mix_sources[-1] == "cov")
 
+    from giflow.adapt import adapted_covariance
+    rng = np.random.default_rng(2)
+    a_mix, b_mix = rng.normal(size=(15, 4)), rng.normal(size=(15, 4))
+    covs = {"a": a_mix @ a_mix.T + np.eye(15), "b": b_mix @ b_mix.T + np.eye(15)}
+    visible = np.ones(15, dtype=bool)
+    visible[[2, 5, 11]] = False
+    xa = np.einsum("nk,wkr->wnr", a_mix, rng.normal(size=(200, 4, 10))) * visible[None, :, None]
+    adapted = adapted_covariance(covs, xa, visible, temperature=0.1)
+    check("adapted covariance leans on the matching participant",
+          np.linalg.norm(adapted - covs["a"]) < 0.2 * np.linalg.norm(adapted - covs["b"]))
+    noisy = xa.copy()
+    noisy[:, ~visible] = rng.normal(size=noisy[:, ~visible].shape) * 100
+    check("adapted covariance ignores hidden electrodes",
+          np.allclose(adapted_covariance(covs, noisy, visible, 0.1), adapted))
+
 
 if __name__ == "__main__":
     torch.manual_seed(0)

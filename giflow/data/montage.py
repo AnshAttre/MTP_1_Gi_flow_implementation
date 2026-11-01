@@ -77,7 +77,7 @@ def spline_interpolate(g: torch.Tensor, x_cond: torch.Tensor, cond_mask: torch.T
 
 
 def covariance_interpolate(cov: torch.Tensor, x_cond: torch.Tensor, cond_mask: torch.Tensor,
-                           reg: float = 1e-4) -> torch.Tensor:
+                           reg: float = 1e-2) -> torch.Tensor:
     """Linear least-squares (kriging) estimate of hidden electrodes from visible ones.
 
     cov: (N, N) electrode covariance from training data. Hidden electrodes get

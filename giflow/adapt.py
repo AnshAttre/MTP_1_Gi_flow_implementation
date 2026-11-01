@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 
@@ -156,4 +157,65 @@ def evaluate_tta(model, test_ds, scaler, cfg, device, blend_weight=None):
         )
         _score(_WithBlend(adapted, blend_weight, cfg.blend_with), subset, scaler, cfg,
                device, accumulators)
+    return {name: acc.compute() for name, acc in accumulators.items()}
+
+
+def _correlation(m):
+    d = np.sqrt(np.clip(np.diag(m), 1e-12, None))
+    return m / np.outer(d, d)
+
+
+def adapted_covariance(subject_covs: dict, x_visible: np.ndarray, visible: np.ndarray,
+                       temperature: float) -> np.ndarray:
+    """Weighted mean of training-participant covariances for one new participant.
+
+    Weights come from how close each training participant's visible-electrode
+    correlation is to the new participant's, computed from the new
+    participant's visible electrodes only (x_visible: (W, N, R), hidden rows
+    zero). Smaller `temperature` concentrates on the closest participants.
+    """
+    a = x_visible.transpose(1, 0, 2).reshape(x_visible.shape[1], -1)
+    own = _correlation((a @ a.T / a.shape[1])[np.ix_(visible, visible)])
+    covs = list(subject_covs.values())
+    dist = np.array([np.linalg.norm(_correlation(c[np.ix_(visible, visible)]) - own) for c in covs])
+    w = np.exp(-(dist - dist.min()) / (temperature * dist.std() + 1e-9))
+    w /= w.sum()
+    return sum(wi * c for wi, c in zip(w, covs))
+
+
+class _WithReference(_WithBlend):
+    """Model, blend, and the adapted kriging estimate on its own ("reference")."""
+
+    @torch.no_grad()
+    def impute(self, x_obs, cond_mask, node_mask=None, **kw):
+        from .train import _blend_reference
+
+        out = super().impute(x_obs, cond_mask, node_mask=node_mask, **kw)
+        out["reference"] = _blend_reference(self.model, x_obs, cond_mask, "cov")
+        return out
+
+
+def evaluate_adapted_cov(model, dataset, scaler, cfg, device, subject_covs, temperature,
+                         blend_weight=None):
+    """Pooled metrics with the covariance source re-weighted per participant.
+
+    For each participant in `dataset`, the model's kriging covariance is replaced
+    by `adapted_covariance` from that participant's visible electrodes; the
+    flow weights are unchanged. Also scores the adapted kriging on its own.
+    """
+    original = model.cov_k
+    accumulators = {}
+    try:
+        for group, indices in sorted(_groups(dataset).items()):
+            subset = Subset(dataset, indices)
+            items = [subset[i] for i in range(len(subset))]
+            cond = torch.stack([it["cond_mask"] for it in items]).numpy()
+            x_vis = torch.stack([it["x_true"] for it in items]).numpy() * cond
+            visible = cond.sum(axis=(0, 2)) > 0
+            cov = adapted_covariance(subject_covs, x_vis, visible, temperature)
+            model.cov_k = torch.as_tensor(cov, dtype=original.dtype, device=original.device)
+            _score(_WithReference(model, blend_weight, cfg.blend_with), subset, scaler, cfg, device,
+                   accumulators)
+    finally:
+        model.cov_k = original
     return {name: acc.compute() for name, acc in accumulators.items()}
