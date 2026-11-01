@@ -166,7 +166,9 @@ Spatial covariance differs between people. For a new participant we compute
 the correlation of their visible electrodes $C_v$ and weight each training
 participant $p$ by $\omega_p\propto\exp(-d_p/(T\,\mathrm{sd}(d)))$, where
 $d_p=\|C_v-C^{(p)}_v\|_F$, then krige with $\sum_p\omega_p\Sigma^{(p)}$.
-Only visible electrodes of the new participant are used. We also fit one
+Only visible electrodes of the new participant are used, but all of that
+participant's test windows are pooled to estimate $C_v$, so the method is
+transductive and needs some recording from the participant first. We also fit one
 covariance per frequency band ($<4$, 4--8, 8--13, 13--30, $\geq$30~Hz) and sum
 the band estimates. $T$ is chosen on validation participants.
 
