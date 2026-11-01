@@ -111,6 +111,10 @@ def _blend_reference(model, x_obs, cond_mask, reference: str = "fp"):
     """Non-learned estimate the flow output is blended with: FP, or the flow
     source X_0 (e.g. the fitted heat/FP/KNN mixture). Keeps visible entries."""
     x_cond = x_obs * cond_mask
+    if reference == "cov":
+        from .data.montage import covariance_interpolate
+
+        return covariance_interpolate(model.cov_k, x_cond, cond_mask)
     if reference == "spline":
         from .data.montage import spline_interpolate
 
@@ -335,10 +339,12 @@ def fit(
     dataset_names: tuple = (),
     verbose: bool = True,
     spline_positions=None,
+    cov_matrix=None,
 ):
     """Run the full pipeline: tau optimisation, then flow-matching training.
 
-    `spline_positions` (N, 3) adds the spherical spline to the source mixture.
+    `spline_positions` (N, 3) adds the spherical spline to the source mixture;
+    `cov_matrix` (N, N) adds the training-covariance (kriging) estimate.
     """
     if cfg.threads:
         torch.set_num_threads(cfg.threads)
@@ -382,6 +388,7 @@ def fit(
         prior_renormalize=cfg.prior_renormalize,
         prior_source=cfg.prior_source,
         spline_positions=spline_positions,
+        cov_matrix=cov_matrix,
         max_tau=cfg.max_tau,
         min_tau_s=cfg.min_tau_s,
         min_tau_t=cfg.min_tau_t,

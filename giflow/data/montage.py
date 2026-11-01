@@ -74,3 +74,24 @@ def spline_interpolate(g: torch.Tensor, x_cond: torch.Tensor, cond_mask: torch.T
     est = torch.einsum("ij,bjr->bir", g, coef[:, :n]) + coef[:, n:]
     est = est.to(x_cond.dtype)
     return cond_mask * x_cond + (1.0 - cond_mask) * est
+
+
+def covariance_interpolate(cov: torch.Tensor, x_cond: torch.Tensor, cond_mask: torch.Tensor,
+                           reg: float = 1e-4) -> torch.Tensor:
+    """Linear least-squares (kriging) estimate of hidden electrodes from visible ones.
+
+    cov: (N, N) electrode covariance from training data. Hidden electrodes get
+    cov[h, v] cov[v, v]^-1 x_v, the best linear predictor under that covariance;
+    unlike the spline it uses the recorded spatial structure, not head geometry.
+    Same batched solve as `spline_interpolate`, without the constant term.
+    """
+    b, n, r = x_cond.shape
+    vis = (cond_mask.sum(-1) > 0).to(cov.dtype)
+    outer = vis[:, :, None] * vis[:, None, :]
+    eye = torch.eye(n, device=cov.device, dtype=cov.dtype)
+    ridge = reg * torch.diagonal(cov).mean()
+    system = cov * outer + eye * (1.0 - vis)[:, None, :] + ridge * eye * vis[:, None, :]
+    rhs = x_cond.to(cov.dtype) * vis[:, :, None]
+    coef = torch.linalg.solve(system, rhs)
+    est = torch.einsum("ij,bjr->bir", cov, coef).to(x_cond.dtype)
+    return cond_mask * x_cond + (1.0 - cond_mask) * est

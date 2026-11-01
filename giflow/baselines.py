@@ -63,9 +63,10 @@ ALL = ("mean_s", "mean_t", "linear", "knn", "fp")
 
 
 def run_baselines(loader, scaler, adj, adj_norm, which=ALL, dataset_names=None,
-                  spline_positions=None) -> dict:
+                  spline_positions=None, cov_matrix=None) -> dict:
     """Score the non-parametric baselines; adds the spherical spline ("spline")
-    when electrode positions are given."""
+    when electrode positions are given and the training-covariance kriging
+    estimate ("cov") when a covariance is given."""
     spline_g = None
     if spline_positions is not None:
         import torch
@@ -75,6 +76,14 @@ def run_baselines(loader, scaler, adj, adj_norm, which=ALL, dataset_names=None,
         spline_g = torch.as_tensor(spherical_spline_g(np.asarray(spline_positions)),
                                    dtype=torch.float64)
         which = tuple(which) + ("spline",)
+    cov_k = None
+    if cov_matrix is not None:
+        import torch
+
+        from .data.montage import covariance_interpolate
+
+        cov_k = torch.as_tensor(np.asarray(cov_matrix), dtype=torch.float64)
+        which = tuple(which) + ("cov",)
     joint = isinstance(scaler, (list, tuple))
     n_datasets = len(scaler) if joint else 1
     accs = {k: [MetricAccumulator() for _ in range(n_datasets)] for k in which}
@@ -99,6 +108,10 @@ def run_baselines(loader, scaler, adj, adj_norm, which=ALL, dataset_names=None,
             if spline_g is not None:
                 preds["spline"] = spline_interpolate(
                     spline_g, torch.as_tensor(x * cond)[None], torch.as_tensor(cond)[None]
+                )[0].numpy()
+            if cov_k is not None:
+                preds["cov"] = covariance_interpolate(
+                    cov_k, torch.as_tensor(x * cond)[None], torch.as_tensor(cond)[None]
                 )[0].numpy()
             for k, p in preds.items():
                 dataset_scaler = scaler[dataset_id] if joint else scaler

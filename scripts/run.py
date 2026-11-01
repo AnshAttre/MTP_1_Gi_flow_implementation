@@ -23,7 +23,9 @@ from torch.utils.data import ConcatDataset
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from giflow.baselines import run_baselines
-from giflow.data.dataset import build_splits, make_loaders, reveal_eval_in_training
+from giflow.data.dataset import (
+    build_splits, make_loaders, reveal_eval_in_training, training_covariance,
+)
 from giflow.data.datasets import align_bundles, load_dataset
 from giflow.data.graph import gcn_normalize, laplacian
 from giflow.data.seed_iv import _correlation_adjacency
@@ -128,9 +130,12 @@ def parse_args(argv=None):
     p.add_argument("--tta-steps", type=int, default=0,
                    help="per-participant test-time adaptation on visible electrodes")
     p.add_argument("--tta-lr", type=float, default=1e-4)
-    p.add_argument("--blend-with", default="fp", choices=["fp", "source", "spline"],
+    p.add_argument("--blend-with", default="fp", choices=["fp", "source", "spline", "cov"],
                    help="what --blend-fp mixes the flow output with: FP, the flow source X_0, "
                         "or the spherical spline (needs --spline)")
+    p.add_argument("--cov-source", action="store_true",
+                   help="score a kriging baseline from the training-electrode covariance and "
+                        "add it to the source mixture (needs --train-reveal-eval)")
     p.add_argument("--spline", action="store_true",
                    help="score the spherical-spline baseline and add it to the "
                         "--prior-source mix sources (needs MNE for electrode positions)")
@@ -323,12 +328,19 @@ def main(argv=None):
             from giflow.data.montage import spline_positions
             spline_pos = spline_positions(bundles[0].channel_names)
 
+        cov = None
+        if args.cov_source:
+            if len(bundles) > 1 or not args.train_reveal_eval:
+                raise ValueError("--cov-source needs a single dataset and --train-reveal-eval")
+            cov = training_covariance(splits[0])
+
         if not args.skip_baselines:
             _, _, test_loader = make_loaders(*splits, batch_size=args.batch_size)
             t0 = time.time()
             base = run_baselines(
                 test_loader, scaler, graphs["adj_s"], graphs["adj_s_norm"],
                 dataset_names=dataset_labels, spline_positions=spline_pos,
+                cov_matrix=cov,
             )
             print("[baselines] (%.1fs)" % (time.time() - t0))
             for k, v in base.items():
@@ -389,7 +401,7 @@ def main(argv=None):
             graphs["adj_s_norm"], graphs["adj_t_norm"], splits, scaler,
         )
         fit_kw = dict(n_timestamp_classes=bundles[0].ts_classes, dataset_names=dataset_labels,
-                      spline_positions=spline_pos)
+                      spline_positions=spline_pos, cov_matrix=cov)
         _, eval_model, hist = fit(*fit_args, cfg, **fit_kw)
         if args.ensemble > 1:
             members = [eval_model]

@@ -478,6 +478,41 @@ def test_spherical_spline():
           torch.allclose(mix.source_sample(field * cond, cond), est, atol=1e-4))
 
 
+def test_covariance_source():
+    print("\n[covariance (kriging) source]")
+    from giflow.data.dataset import training_covariance
+    from giflow.data.montage import covariance_interpolate
+
+    rng = np.random.default_rng(1)
+    mixing = rng.normal(size=(20, 6))
+    cov = torch.as_tensor(mixing @ mixing.T + 0.01 * np.eye(20), dtype=torch.float64)
+    x = torch.as_tensor(mixing @ rng.normal(size=(6, 7)), dtype=torch.float64)[None]
+    cond = torch.ones_like(x)
+    hidden = np.array([1, 4, 9, 15])
+    vis = np.setdiff1d(np.arange(20), hidden)
+    cond[:, hidden] = 0
+    est = covariance_interpolate(cov, x * cond, cond, reg=0.0)
+    c = cov.numpy()
+    ref = c[np.ix_(hidden, vis)] @ np.linalg.solve(c[np.ix_(vis, vis)], x[0, vis].numpy())
+    check("kriging matches cov_hv cov_vv^-1 x_v", np.allclose(est[0, hidden].numpy(), ref, atol=1e-6))
+    check("kriging keeps visible entries", torch.allclose(est * cond, x * cond))
+    err = float(((est - x)[:, hidden] ** 2).sum() / (x[:, hidden] ** 2).sum())
+    check("kriging recovers low-rank data (NMSE < 0.01)", err < 0.01, "NMSE %.4f" % err)
+
+    b = load_synthetic(n_nodes=15, n_steps=300, seed=0)
+    tr, va, te, sc, info = build_splits(
+        b.x, b.observed_mask, window=24, missing_strategy="channel", rho=0.5, seed=0
+    )
+    cov_tr = training_covariance(tr)
+    check("training covariance is symmetric, full size",
+          cov_tr.shape == (15, 15) and np.allclose(cov_tr, cov_tr.T))
+    check("training covariance covers every electrode, eval ones included",
+          float(tr.eval_mask.sum()) > 0 and float(np.diag(cov_tr).min()) > 0)
+    g = graphs(15, 24)
+    mix = GiFlow(hidden=8, n_mp_layers=1, emb_dim=4, prior_source="mix", cov_matrix=cov_tr, **g)
+    check("mixture gains a covariance source", mix.mix_sources[-1] == "cov")
+
+
 if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
@@ -489,6 +524,7 @@ if __name__ == "__main__":
     test_training_signal_and_fp_source()
     test_ensemble_and_test_time_adaptation()
     test_spherical_spline()
+    test_covariance_source()
     print("\n" + "=" * 60)
     print("%d passed, %d failed" % (len(PASS), len(FAIL)))
     if FAIL:

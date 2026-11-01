@@ -343,6 +343,26 @@ def reveal_eval_in_training(train_ds) -> None:
         ds.reveal_eval = True
 
 
+def training_covariance(train_ds, max_windows: int = 5000) -> np.ndarray:
+    """(N, N) second-moment matrix of the normalised training signal over all
+    electrodes, including the evaluation ones (training participants have them).
+
+    Pairs are averaged over samples where both electrodes are genuinely observed.
+    """
+    total, count = 0.0, 0.0
+    for ds in getattr(train_ds, "datasets", [train_ds]):
+        starts = np.asarray(ds.indices)
+        if len(starts) > max_windows:
+            starts = starts[np.linspace(0, len(starts) - 1, max_windows).round().astype(int)]
+        for s in starts:
+            sl = slice(int(s), int(s) + ds.window)
+            obs = ds.observed_mask[:, sl]
+            x = ds.scaler.transform(ds.x[:, sl]) * obs
+            total = total + x @ x.T
+            count = count + obs @ obs.T
+    return total / np.maximum(count, 1.0)
+
+
 def make_loaders(train_ds, val_ds, test_ds, batch_size: int = 32, num_workers: int = 0):
     kw = dict(num_workers=num_workers, pin_memory=False)
     if isinstance(train_ds, ConcatDataset):

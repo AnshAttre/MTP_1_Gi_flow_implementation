@@ -140,6 +140,7 @@ class GiFlow(nn.Module):
         prior_source: str = "heat",
         fp_iterations: int = 40,
         spline_positions: np.ndarray | None = None,
+        cov_matrix: np.ndarray | None = None,
     ):
         super().__init__()
         if prior_source not in ("heat", "fp", "mix"):
@@ -167,6 +168,12 @@ class GiFlow(nn.Module):
                     "spline_g",
                     torch.as_tensor(spherical_spline_g(np.asarray(spline_positions)),
                                     dtype=torch.float64),
+                    persistent=False,
+                )
+            if cov_matrix is not None:
+                self.mix_sources = self.mix_sources + ("cov",)
+                self.register_buffer(
+                    "cov_k", torch.as_tensor(np.asarray(cov_matrix), dtype=torch.float64),
                     persistent=False,
                 )
             self.mix_logits = nn.Parameter(torch.zeros(len(adj_s), len(self.mix_sources)))
@@ -265,7 +272,8 @@ class GiFlow(nn.Module):
 
     def source_mixture(self, x_cond: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
         """Per-electrode mixture of the heat-kernel, FP and KNN estimates, plus
-        the spherical spline when electrode positions were given.
+        the spherical spline when electrode positions were given and the
+        covariance (kriging) estimate when a training covariance was given.
 
         Visible entries are kept as observed; only the hidden ones are mixed.
         """
@@ -278,6 +286,10 @@ class GiFlow(nn.Module):
             from ..data.montage import spline_interpolate
 
             estimates.append(spline_interpolate(self.spline_g, x_cond, cond_mask))
+        if "cov" in self.mix_sources:
+            from ..data.montage import covariance_interpolate
+
+            estimates.append(covariance_interpolate(self.cov_k, x_cond, cond_mask))
         sources = torch.stack(estimates, dim=-1)              # (B, N, R, K)
         mixed = (sources * self.mixture_weights()[None, :, None, :]).sum(-1)
         return cond_mask * x_cond + (1.0 - cond_mask) * mixed
