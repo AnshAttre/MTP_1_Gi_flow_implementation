@@ -24,11 +24,12 @@ email@example.com}
 Recovering EEG electrodes that fail during a recording is usually done with
 spherical-spline interpolation, while recent work proposes deep generative
 models. We study graph-informed flow matching (GiFlow) for 50\% whole-electrode
-loss on SEED-IV with participants held out, and find that, as published, it
-is far weaker than the spline (normalized mean-squared error, NMSE, 0.335 vs
-0.150). We identify three causes: the model is never trained on the
-electrodes it is scored on, its heat-kernel source is a poor starting point
-for EEG, and it overfits training participants within one epoch. We fix them
+loss on SEED-IV with participants held out. Our implementation with the
+published hyperparameters is far weaker than the spline (normalized
+mean-squared error, NMSE, 0.335 vs 0.150). We identify three causes: our
+initial masking protocol never trained the model on the electrodes it is
+scored on, the heat-kernel source is a poor starting point for EEG, and the
+model overfits training participants within one epoch. We fix them
 with full-montage training, an \emph{anchored} source that mixes classical
 estimates per electrode (feature propagation, nearest neighbours, spherical
 spline, covariance kriging), and step-level early stopping, reducing NMSE by
@@ -59,8 +60,8 @@ rather than from noise.
 
 We apply GiFlow to whole-electrode loss on SEED-IV \cite{zheng2019emotionmeter}
 with participant-held-out evaluation and make four contributions. (i) We
-show that GiFlow, as published, is far weaker than spherical-spline
-interpolation for EEG and identify why. (ii) We propose \emph{Anchored
+show that GiFlow, implemented with its published hyperparameters, is far
+weaker than spherical-spline interpolation for EEG and identify why. (ii) We propose \emph{Anchored
 Flow}: the flow starts from a per-electrode mixture of classical estimates,
 learned by minimizing transport cost, which reduces NMSE by 59\%. (iii) We
 show that a linear kriging predictor built from training-participant
@@ -126,9 +127,9 @@ restores visible entries.
 
 \subsection{Three fixes}
 
-\textbf{Full-montage training.} In the original protocol the evaluation
-mask is applied to the whole recording, so the scored electrodes are also
-hidden in training windows and never serve as targets. We reveal them in
+\textbf{Full-montage training.} In our initial protocol the evaluation
+mask was applied to the whole recording, so the scored electrodes were also
+hidden in training windows and never served as targets. We reveal them in
 training windows and hide random whole electrodes as targets; validation and
 test windows keep the evaluation mask.
 
@@ -212,7 +213,7 @@ Kriging, participant-weighted, per band$^\dagger$ & 0.1196 $\pm$ 0.0065 & \tbd{-
 \quad (same, without spline average) & 0.1142 $\pm$ 0.0075 & \tbd{--}\\
 \midrule
 \multicolumn{3}{l}{\emph{Learned}}\\
-GiFlow (published configuration) & 0.3350 $\pm$ 0.0183 & 0.820\\
+GiFlow (published hyperparameters) & 0.3350 $\pm$ 0.0183 & 0.820\\
 Anchored Flow, spline source & 0.1357 $\pm$ 0.0071 & 0.931\\
 Regression control (same net, no flow) & 0.1332 $\pm$ 0.0084 & 0.931\\
 Anchored Flow, spline + kriging source & \tbd{TBD} & \tbd{TBD}\\
@@ -223,7 +224,7 @@ SRG-flow \cite{liu2026srgdiff}-style, same source & \tbd{TBD} & \tbd{TBD}\\
 
 \begin{table}[t]
 \centering
-\caption{Ablation from the published configuration (held-out participants;
+\caption{Ablation from GiFlow with published hyperparameters (held-out participants;
 model output alone / blended).}
 \label{tab:ablation}
 \setlength{\tabcolsep}{3pt}
@@ -231,7 +232,7 @@ model output alone / blended).}
 \toprule
 Configuration & Model & Blend\\
 \midrule
-Published GiFlow configuration & 0.3350 & --\\
+GiFlow, published hyperparameters & 0.3350 & --\\
 + full-montage training, mixed source (heat/FP/KNN) & 0.2381 & 0.2196\\
 + spherical spline in the mixture & 0.1511 & 0.1452\\
 + validation every 100 steps & 0.1507 & 0.1450\\
@@ -242,8 +243,8 @@ Published GiFlow configuration & 0.3350 & --\\
 \end{tabular}
 \end{table}
 
-\textbf{GiFlow is weaker than the spline as published.} Table~\ref{tab:main}
-shows that the published GiFlow configuration (0.335) is more than twice
+\textbf{Baseline GiFlow is weaker than the spline.} Table~\ref{tab:main}
+shows that our GiFlow implementation with published hyperparameters (0.335) is more than twice
 the spline's NMSE (0.150), and also worse than KNN. The fitted mixture puts
 only 7--10\% of its weight on GiFlow's own heat-kernel source.
 
@@ -272,8 +273,8 @@ spline's $0.143\pm0.006$. Anchored Flow with kriging in its source gives
 
 \section{Discussion}
 
-Three lessons follow. First, published imputation models can be
-miscalibrated for EEG by protocol details: a mask that hides scored
+Three lessons follow. First, imputation models transferred to EEG can be
+miscalibrated by protocol details: a mask that hides scored
 electrodes during training and per-epoch early stopping each cost more than
 any architectural change we tried. Second, the source matters more than the
 generator: the anchored source accounts for most of the 59\% gain, and a
@@ -285,7 +286,10 @@ studies, including diffusion-based ones, should report such baselines under
 a shared NMSE definition.
 
 \textbf{Limitations.} One dataset with random electrode subsets, short
-(0.5~s) windows, and three seeds. Settings where interpolation is known to
+(0.5~s) windows, three seeds and three test participants; differences of
+about 2\% (e.g., flow versus regression control) are within seed variation.
+GiFlow is our reimplementation, not the authors' code. The cerebellar CB1/CB2
+electrodes were placed at the 10-05 positions I1/I2 for the spline. Settings where interpolation is known to
 fail, such as contiguous missing regions or very sparse montages, and
 generative uses such as uncertainty estimation were not evaluated; these are
 where a flow model may still pay off. We did not reproduce published
