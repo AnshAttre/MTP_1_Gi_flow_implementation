@@ -223,7 +223,7 @@ Anchored Flow, spline source & 0.1357 $\pm$ 0.0071 & 0.931\\
 Regression control (same net, no flow) & 0.1332 $\pm$ 0.0084 & 0.931\\
 Anchored Flow, spline + kriging source & 0.1266 $\pm$ 0.0095 & 0.935\\
 \quad + participant-weighted kriging & 0.1161 $\pm$ 0.0088 & 0.940\\
-SRG-flow \cite{liu2026srgdiff}-style, same source & \tbd{TBD} & \tbd{TBD}\\
+SRG-flow \cite{liu2026srgdiff}-style, spline + kriging source & 0.1266 $\pm$ 0.0095 & 0.935\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -284,7 +284,9 @@ essentially return the kriging estimate (0.1266). Re-weighting the
 kriging covariance per test participant gives the same picture: 0.1188 for
 the flow, 0.1161 blended, and 0.1160 for the kriging alone. Once the source
 is the best linear predictor, the network learns no correction that
-transfers to new participants.
+transfers to new participants. Adding SRGDiff-style residual guidance and
+step modulation \cite{liu2026srgdiff} to the flow changes nothing (0.1297
+alone, 0.1266 blended, 0.1161 with participant weighting).
 
 \section{Discussion}
 

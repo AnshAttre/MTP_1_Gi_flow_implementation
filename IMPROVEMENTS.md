@@ -47,7 +47,9 @@ regression control" below):**
    weights (0 / 0 / 0.30) return the kriging estimate (0.1266). With
    per-participant covariance weighting at test time: flow 0.1188, blend
    0.1161, kriging alone 0.1160 (per seed 0.1110 / 0.1285 / 0.1085,
-   PCC 0.940).
+   PCC 0.940). The SRGDiff-inspired `srg_flow` variant on the same source
+   (kernel `anshattre/giflow-seed4-srg`) is identical: 0.1297 alone, 0.1266
+   blended, 0.1161 with participant weighting; one participant 0.0829.
 
 Earlier development results (one subject, unfiltered): Anchored Flow + FP
 blend reached 0.2930 ± 0.0130, 34.1% below the manuscript configuration
