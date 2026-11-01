@@ -396,3 +396,41 @@ Blend weights 0.466 / 0.457 / 0.411.
 - These numbers use unfiltered data. With 0.5-75 Hz band-pass at 200 Hz
   (commit `d752e25`) the seed-0 baselines fall to KNN 0.2781 / FP 0.2531, so
   filtered runs are not comparable with this table.
+
+### Literature-comparable setup: all subjects, filtered, held-out participants (Kaggle T4)
+
+Kernels `anshattre/giflow-seed4-improve` (commit `3a518fe`),
+`anshattre/giflow-seed4-next` (`f3a3b3c`) and `anshattre/giflow-seed4-spline`
+(`144d638`), 2026-11-01. Data `seed_iv_all.npz` (15 subjects, 17
+recordings), `--bandpass 0.5 75 --resample-hz 200`, `--split-mode subject`
+(test 7 / 10 / 15, validation 6 / 12), window/stride 100,
+`--max-windows 15000`, paper training config, seeds 0-2. All model rows also
+use `--train-reveal-eval --train-keep-range 1 1`. Population std over seeds.
+
+| Method | NMSE mean +/- std | PCC | PSNR (dB) | SNR (dB) | Per-seed NMSE |
+|---|---:|---:|---:|---:|---|
+| Paper config | 0.3350 +/- 0.0183 | 0.8203 | 32.79 | 4.76 | 0.3210 / 0.3232 / 0.3609 |
+| Mix (heat/FP/KNN), flow only | 0.2381 +/- 0.0106 | 0.8755 | 34.27 | 6.24 | 0.2305 / 0.2306 / 0.2532 |
+| Mix + FP blend | 0.2196 +/- 0.0047 | 0.8847 | 34.62 | 6.59 | 0.2162 / 0.2164 / 0.2262 |
+| Mix + ensemble 3 + FP blend | 0.2186 +/- 0.0038 | 0.8851 | 34.64 | 6.60 | 0.2149 / 0.2170 / 0.2238 |
+| Mix + TTA 100 + FP blend | 0.2361 +/- 0.0032 | 0.8779 | 34.30 | 6.27 | 0.2345 / 0.2332 / 0.2406 |
+| Mix with spline (`--spline`), flow only | 0.1511 +/- 0.0051 | 0.9245 | 36.24 | 8.21 | 0.1548 / 0.1547 / 0.1439 |
+| **Mix with spline + spline blend** | **0.1452 +/- 0.0058** | **0.9268** | **36.42** | **8.38** | 0.1457 / 0.1521 / 0.1379 |
+| Spherical spline | 0.1496 +/- 0.0060 | 0.9245 | | | 0.1482 / 0.1576 / 0.1430 |
+| KNN | 0.2905 +/- 0.0069 | 0.8455 | | | 0.2809 / 0.2963 / 0.2944 |
+| FP | 0.3216 +/- 0.0076 | 0.8345 | | | 0.3109 / 0.3260 / 0.3279 |
+
+Spline blend weights 0.245 / 0.399 / 0.541; FP blend weights
+0.702 / 0.661 / 0.647. Spline-run mixture weights: spline 0.54-0.56,
+FP 0.19-0.22, KNN 0.14-0.18, heat 0.07-0.10.
+
+One subject (`seed_iv_one.npz`), same filtering, window split, `--spline`
+mix + spline blend: **0.1273 +/- 0.0009** (0.1260 / 0.1283 / 0.1275), flow
+only 0.1289, versus spline 0.1430 (0.1360 / 0.1504 / 0.1427), KNN 0.2843,
+FP 0.2621.
+
+- The spline-blend model beats the spline on every seed in both setups:
+  by 1.7-3.6% on held-out participants and 7-15% on one subject.
+- On held-out participants validation NMSE was best after epoch 0 on every
+  seed and rose afterwards: the flow overfits the training participants.
+- TTA hurt on every seed; the 3-model ensemble gained only 0.5%.

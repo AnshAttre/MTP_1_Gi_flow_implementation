@@ -8,25 +8,33 @@ Last updated: 2026-11-01.
 
 ## Summary
 
-Our best model, **Anchored Flow + FP blend**, reaches **NMSE 0.2930 ± 0.0130**
-on 50% electrode loss. That is **34.1% below the configuration in our ISBI
-manuscript (0.4445)** and about **13% below the KNN (0.3394) and
-feature-propagation (FP, 0.3360) baselines**.
+**Headline (2026-11-01, literature-comparable setup).** On all 15 SEED-IV
+subjects, band-passed 0.5–75 Hz at 200 Hz, with participants 7, 10 and 15
+held out, **Anchored Flow with a spherical-spline source + spline blend
+reaches NMSE 0.1452 ± 0.0058 (PCC 0.927)**. The paper configuration scores
+0.3350 on the same setup, so this is **56.7% lower**. It beats the spherical
+spline (0.1496), KNN (0.2905) and FP (0.3216) on every seed, but the margin
+over the spline is small (1.7–3.6% per seed). On one subject (window split)
+it reaches **0.1273 ± 0.0009**, 11% below the spline (0.1430).
 
-- It beats KNN and FP on all three seeds and on all four metrics
-  (NMSE, PCC, PSNR, SNR).
-- **Correction (2026-11-01): it does not beat the spherical spline**, the
-  standard EEG interpolator, which scores 0.2720 on the same setup. KNN and FP
-  were weak baselines. The spline is now both a baseline and a source of the
-  model (step 9 below); results for that version are pending.
+| Setup (filtered, 3 seeds) | Paper config | KNN | FP | Spherical spline | **Ours** |
+| --- | --- | --- | --- | --- | --- |
+| All subjects, held-out participants | 0.3350 | 0.2905 | 0.3216 | 0.1496 | **0.1452** |
+| One subject, window split | — | 0.2843 | 0.2621 | 0.1430 | **0.1273** |
+
+Earlier development results (one subject, unfiltered): Anchored Flow + FP
+blend reached 0.2930 ± 0.0130, 34.1% below the manuscript configuration
+(0.4445) and 13% below KNN and FP, but not below the spherical spline (0.2720).
+
+- KNN and FP were weak baselines; the spherical spline, built from electrode
+  positions, is the baseline to beat.
 - Most of the gain came from one fix: the model was never trained on the
   electrodes it is scored on. Fixing that alone cut NMSE by 15%.
 - The remaining gains came from starting the flow at a strong classical
   estimate (FP, then a learned per-electrode mixture of heat-kernel, FP and
   KNN) and blending the output with FP.
-- These numbers come from the development setup (one SEED-IV subject,
-  unfiltered data). The literature-comparable run (all 15 subjects,
-  0.5–75 Hz band-pass, held-out participants) is in progress.
+- With the spline in the mixture, it takes about 55% of the source weight,
+  and the trained flow adds a correction on top.
 
 ## Task, setup and metrics
 
@@ -34,7 +42,7 @@ The task is whole-electrode recovery: 31 of the 62 SEED-IV electrodes are
 hidden for the whole window and must be reconstructed from the other 31.
 Only the hidden entries are scored.
 
-| Item | Development setup (all results below) | Literature-comparable setup (in progress) |
+| Item | Development setup | Literature-comparable setup |
 | --- | --- | --- |
 | Data | One SEED-IV subject, packed `X_prc1`, 250 Hz | All 15 subjects (17 recordings) |
 | Preprocessing | None | 0.5–75 Hz band-pass per 4 s trial, resampled to 200 Hz |
@@ -88,6 +96,50 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
   --epochs 50 --patience 8 --batch-size 32 --seeds 3 --device cuda \
   --train-keep-range 1 1 --train-reveal-eval --prior-source mix --blend-fp
 ```
+
+## Results on the literature-comparable setup
+
+All 15 subjects, band-pass 0.5–75 Hz, 200 Hz, held-out participants
+7 / 10 / 15 (validation 6 / 12), up to 15,000 windows, seeds 0–2, Kaggle T4.
+Baselines are recomputed on every seed's mask.
+
+| Method | NMSE | PCC | PSNR (dB) | SNR (dB) | Per-seed NMSE | Commit |
+| --- | --- | --- | --- | --- | --- | --- |
+| Paper configuration | 0.3350 ± 0.0183 | 0.8203 | 32.79 | 4.76 | 0.3210 / 0.3232 / 0.3609 | `3a518fe` |
+| Anchored Flow (heat/FP/KNN), flow only | 0.2381 ± 0.0106 | 0.8755 | 34.27 | 6.24 | 0.2305 / 0.2306 / 0.2532 | `3a518fe` |
+| Anchored Flow + FP blend | 0.2196 ± 0.0047 | 0.8847 | 34.62 | 6.59 | 0.2162 / 0.2164 / 0.2262 | `3a518fe` |
+| + ensemble of 3 | 0.2186 ± 0.0038 | 0.8851 | 34.64 | 6.60 | 0.2149 / 0.2170 / 0.2238 | `f3a3b3c` |
+| + test-time adaptation (100 steps) | 0.2361 ± 0.0032 | 0.8779 | 34.30 | 6.27 | 0.2345 / 0.2332 / 0.2406 | `f3a3b3c` |
+| Anchored Flow with spline source, flow only | 0.1511 ± 0.0051 | 0.9245 | 36.24 | 8.21 | 0.1548 / 0.1547 / 0.1439 | `144d638` |
+| **Anchored Flow with spline source + spline blend** | **0.1452 ± 0.0058** | **0.9268** | **36.42** | **8.38** | 0.1457 / 0.1521 / 0.1379 | `144d638` |
+| Spherical spline | 0.1496 ± 0.0060 | 0.9245 | — | — | 0.1482 / 0.1576 / 0.1430 | — |
+| KNN | 0.2905 ± 0.0069 | 0.8455 | — | — | 0.2809 / 0.2963 / 0.2944 | — |
+| FP | 0.3216 ± 0.0076 | 0.8345 | — | — | 0.3109 / 0.3260 / 0.3279 | — |
+
+Same filtering, one subject, window split (commit `144d638`):
+
+| Method | NMSE | PCC | PSNR (dB) | SNR (dB) | Per-seed NMSE |
+| --- | --- | --- | --- | --- | --- |
+| Anchored Flow with spline source, flow only | 0.1289 ± 0.0007 | 0.9348 | 34.82 | 8.90 | 0.1299 / 0.1286 / 0.1283 |
+| **+ spline blend** | **0.1273 ± 0.0009** | **0.9355** | **34.88** | **8.95** | 0.1260 / 0.1283 / 0.1275 |
+| Spherical spline | 0.1430 ± 0.0059 | 0.9271 | — | — | 0.1360 / 0.1504 / 0.1427 |
+| KNN | 0.2843 ± 0.0050 | 0.8474 | — | — | 0.2781 / 0.2846 / 0.2902 |
+| FP | 0.2621 ± 0.0073 | 0.8704 | — | — | 0.2531 / 0.2621 / 0.2710 |
+
+Observations:
+
+- **Held-out participants.** The flow alone (0.1511) is slightly worse than
+  the spline (0.1496); only the blend beats it, on every seed (−1.7%, −3.5%,
+  −3.6%). Blend weights on the model were low (0.25 / 0.40 / 0.54).
+- **Overfitting across participants.** Validation NMSE was best after the
+  first epoch on all seeds (e.g. 0.1830 → 0.1968 by epoch 8 on seed 2) while
+  training loss kept falling. The flow learns subject-specific corrections
+  that do not transfer. On one subject, where train and test share the
+  participant, the flow clearly beats the spline (−11%).
+- Mixture weights with the spline source: heat 0.07–0.10, FP 0.19–0.22,
+  KNN 0.14–0.18, spline 0.54–0.56.
+- The ensemble of three gave only −0.5%; test-time adaptation made things
+  worse (see "What did not help").
 
 ## What each improvement does
 
@@ -163,13 +215,14 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
   comparisons stay fair, and our numbers become comparable with the
   literature. Model results on filtered data are pending.
 
-### 7. Multi-model ensemble (`--ensemble K`), implemented, pending
+### 7. Multi-model ensemble (`--ensemble K`)
 
 - K models per seed with different initialisations on the same split and
   masks; their mean is scored, and the mean can be blended with FP.
-- Smoke test (1 epoch, small subset): 0.2327 → 0.2275 with K = 2. Not a result.
+- **Result** (all subjects, held-out, K = 3): 0.2196 → 0.2186 after the blend
+  (−0.5%), at three times the training cost. Not worth it on its own.
 
-### 8. Test-time adaptation (`--tta-steps N`), implemented, pending
+### 8. Test-time adaptation (`--tta-steps N`), did not help
 
 - For each test participant, a copy of the vector field is fine-tuned on that
   participant's visible electrodes only (some hidden as targets), then the
@@ -177,8 +230,9 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
 - A unit test replaces every evaluation entry with noise and checks the
   adapted prediction is unchanged; a control shows the same noise on visible
   entries does change it. TTA cannot see the hidden data.
-- On a same-subject smoke test it hurt (0.2327 → 0.2435), which is expected;
-  its real test is the held-out-participant setup.
+- **Result** (all subjects, held-out, 100 steps at the default rate): it
+  hurt, 0.2196 → 0.2361 after the blend and 0.2381 → 0.2633 for the flow
+  alone, on every seed. Fine-tuning on 31 visible electrodes overfits them.
 
 ### 9. Spherical spline as baseline and mixture source (`--spline`)
 
@@ -189,7 +243,7 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
   | Data (one subject, seeds 0–2) | Spherical spline | KNN | FP | Best model so far |
   | --- | --- | --- | --- | --- |
   | Unfiltered | **0.2720** (0.2789 / 0.2711 / 0.2661) | 0.3394 | 0.3360 | 0.2930 |
-  | Filtered 0.5–75 Hz, 200 Hz | **0.1430** (0.1360 / 0.1504 / 0.1427) | 0.2843 | 0.2621 | pending |
+  | Filtered 0.5–75 Hz, 200 Hz | **0.1430** (0.1360 / 0.1504 / 0.1427) | 0.2843 | 0.2621 | 0.1273 (with spline source) |
 
 - **Consequence.** The spline must be in the paper's baseline table; the
   earlier "beats the baselines" claim only held against KNN and FP.
@@ -200,9 +254,10 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
 - **Smoke test** (filtered, 1 epoch, small subset; not a result): spline
   0.1664, Anchored Flow with spline source 0.1430, plus spline blend 0.1409.
   The fitted mixture put 54% of its weight on the spline.
-- **Running:** Kaggle kernel `anshattre/giflow-seed4-spline`, commit
-  `144d638`: one-subject filtered and all-subject held-out filtered, 3 seeds
-  each, with the spline baseline on every seed.
+- **Result** (Kaggle kernel `anshattre/giflow-seed4-spline`, commit
+  `144d638`): 0.1273 on one subject (spline 0.1430) and 0.1452 on held-out
+  participants (spline 0.1496). Full tables are in "Results on the
+  literature-comparable setup" above.
 
 ## What did not help
 
@@ -210,6 +265,8 @@ python scripts/run.py --dataset seed4 --seed-root data/seed_iv_one.npz \
 | --- | --- | --- |
 | Renormalised heat-kernel prior (`--prior-renormalize`) | 0.4622 vs 0.4445 (worse) | Alone it matched KNN, but its fitted tau_s collapsed to 0.015–0.034, giving hidden electrodes a near-zero denominator and an unstable source. |
 | Longer training (150 epochs, patience 15) | 0.3181, identical | Early stopping picked the same epochs (2 / 7 / 2). |
+| Test-time adaptation, 100 steps (`--tta-steps 100`) | 0.2361 vs 0.2196 (worse, every seed) | Fine-tuning on the visible electrodes of one participant overfits them. |
+| Ensemble of 3 (`--ensemble 3`) | 0.2186 vs 0.2196 (−0.5%) | Members make nearly the same errors; three times the cost. |
 | Blend with the mixture source instead of FP (`--blend-with source`) | No gain on smoke test (w = 1.0) | The trained flow already improves on its own source. |
 | Training channel dropout on top of point subsampling (earlier E-series) | 2.6% worse | Training context became far sparser than evaluation. |
 | Forced spatial smoothing `--min-tau-s 0.25` (earlier E-series) | 0.8% worse | The heat-kernel prior is the weak source either way. |
@@ -251,11 +308,12 @@ Sources:
 
 ## Open runs and next steps
 
-- **Running:** all 15 subjects, band-pass 0.5–75 Hz at 200 Hz, held-out
-  participants 7 / 10 / 15, paper config versus Anchored Flow + blend, three
-  seeds (Kaggle kernel `anshattre/giflow-seed4-improve`, commit `3a518fe`).
-- **Next:** Anchored Flow + ensemble (K = 3) + test-time adaptation on that
-  same setup (commit `f3a3b3c`).
+- **Done:** all-subject held-out runs for the paper configuration, Anchored
+  Flow + blend, ensemble, TTA and the spline source (tables above).
+- **Next:** reduce cross-participant overfitting, since validation NMSE is
+  best after one epoch: lower learning rate, stronger regularisation, or
+  validation checks within the first epoch. The flow should add more on top
+  of the spline than the current 3%.
 - **Then:** match the literature protocol fully (fixed electrode layout,
   4 s windows via the channel-token architecture), add electrode
   coordinates, run five seeds, and rerun on the raw DEAP + SEED-IV data used
