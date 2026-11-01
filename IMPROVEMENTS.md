@@ -24,9 +24,24 @@ stopping and regularisation reaches NMSE 0.1357 ± 0.0071 (PCC 0.931)**, and
 
 Most of the distance from the paper configuration comes from starting the
 flow at the spline (a 1989 method that alone beats the original GiFlow by
-55%); the flow's own contribution is the further 9% over the spline. Whether
-a plain regression network on top of the spline would match it is still
-open (see next steps).
+55%); the network's contribution is the further 9% over the spline.
+
+**Two critical findings (2026-11-01, see "Stronger linear baselines and the
+regression control" below):**
+
+1. **Flow matching adds nothing over plain regression here.** The same
+   network trained as a one-step regressor of the residual (no flow, t = 0,
+   one step) reaches 0.1368 alone and 0.1332 with the blend, matching or
+   beating the flow (0.1367 / 0.1357).
+2. **Linear kriging beats the network.** A linear predictor of hidden from
+   visible electrodes, built from the training-participant covariance,
+   reaches 0.1265; weighting training participants by how similar their
+   visible-electrode correlations are to each new participant, per frequency
+   band, reaches 0.1142 (0.1196 for the variant selected on validation).
+   Neither uses the hidden electrodes of test participants.
+
+Kriging is now a baseline and a GiFlow source (`--cov-source`,
+`--adapt-cov`); the GiFlow run on top of it is pending.
 
 Earlier development results (one subject, unfiltered): Anchored Flow + FP
 blend reached 0.2930 ± 0.0130, 34.1% below the manuscript configuration
@@ -175,6 +190,44 @@ source as above, seeds 0–2, commit `4d359df`.
 - Test NMSE (0.137) is below validation NMSE (0.16–0.19), so the selected
   checkpoint is not overfit to the test participants; validation
   participants 6 and 12 are simply harder.
+
+### Stronger linear baselines and the regression control
+
+Same all-subject held-out filtered setup, seeds 0–2.
+
+**Regression control** (`--regression-control`, commit `9eeec7c`, kernel
+`anshattre/giflow-seed4-control`): the REG network and spline-mixture source,
+trained to predict X₁ − X₀ in one step at t = 0 and imputed with one step.
+
+| Model | Flow / network only | + spline blend | Per-seed (blend) |
+| --- | --- | --- | --- |
+| GiFlow REG (flow matching, 10 Euler steps) | 0.1367 | 0.1357 ± 0.0071 | 0.1329 / 0.1454 / 0.1287 |
+| Regression control, validation every 100 steps | 0.1368 | 0.1332 ± 0.0084 | 0.1262 / 0.1451 / 0.1284 |
+| Regression control, validation every 25 steps | 0.1367 | 0.1332 ± 0.0084 | 0.1263 / 0.1450 / 0.1284 |
+
+The flow does not beat a one-step regressor with the same network and source.
+The regressor also overfits more slowly (best checkpoint at steps 475–5,800).
+
+**Linear kriging baselines** (CPU kernels `anshattre/giflow-ridge-test` and
+`anshattre/giflow-kriging-test`). The covariance comes from training
+participants with all electrodes; ridge 1e-2 relative to the mean variance.
+
+| Method | Val NMSE | Test NMSE | Per-seed test |
+| --- | --- | --- | --- |
+| Spherical spline | 0.1848 | 0.1496 | 0.1482 / 0.1576 / 0.1430 |
+| Kriging (training covariance) | 0.1729 | 0.1265 | 0.1228 / 0.1395 / 0.1173 |
+| Kriging per frequency band (<4, 4–8, 8–13, 13–30, ≥30 Hz) | 0.1724 | 0.1244 | 0.1224 / 0.1347 / 0.1161 |
+| Kriging, participant-weighted (temperature 0.5) | 0.1585 | 0.1160 | 0.1110 / 0.1285 / 0.1085 |
+| Kriging per band, participant-weighted (0.5) | 0.1585 | **0.1142** | 0.1097 / 0.1248 / 0.1081 |
+| Same + spline average (best on validation) | **0.1575** | 0.1196 | 0.1170 / 0.1285 / 0.1133 |
+| Kriging per band, participant-weighted (2.0) | 0.1632 | 0.1177 | 0.1147 / 0.1285 / 0.1100 |
+
+Participant weighting: for each new participant, each training participant's
+covariance is weighted by exp(−d / (T·std(d))), where d is the Frobenius
+distance between visible-electrode correlation matrices; only visible
+electrodes of the new participant are used. On one subject (window split)
+plain kriging reaches 0.0757 / 0.0912 / 0.0821 (spline 0.1360 / 0.1504 /
+0.1427) and per-band kriging 0.0731 / 0.0876 / 0.0790.
 
 ## What each improvement does
 
@@ -349,9 +402,14 @@ Sources:
 - **Running:** validation every 25 steps, with and without layout-matched
   training (`--train-layout-prob 0.5`, commit `e74c5d7`; Kaggle kernel
   `anshattre/giflow-seed4-overfit-c`).
-- **Next:** a non-generative control (same network regressing the spline
-  residual, no flow) to show the gain comes from flow matching; uncertainty
-  from multiple flow samples versus error, which the spline cannot provide.
+- **Done:** regression control (the flow does not beat it) and linear
+  kriging baselines (they beat the network).
+- **Running:** GiFlow with spline + kriging sources and per-participant
+  covariance adaptation (`--cov-source --adapt-cov 0.5`, commit `5d52295`,
+  kernel `anshattre/giflow-seed4-cov`).
+- **Next:** a reason for the flow to exist beyond NMSE: calibrated
+  uncertainty from stochastic sampling, or settings where interpolation fails
+  (contiguous missing regions, few electrodes).
 - **Then:** match the literature protocol fully (fixed electrode layout,
   4 s windows via the channel-token architecture), add electrode
   coordinates, run five seeds, and rerun on the raw DEAP + SEED-IV data used
@@ -372,6 +430,9 @@ Sources:
 | `144d638` | `--spline`, `--blend-with spline` (spherical spline) |
 | `4d359df` | `--val-every-steps` (step-level validation and early stopping) |
 | `e74c5d7` | `--train-layout-prob` (layout-matched training) |
+| `9eeec7c` | `--regression-control` (one-step regression, no flow) |
+| `590747e` | `--cov-source`, `--blend-with cov` (training-covariance kriging) |
+| `5d52295` | `--adapt-cov` (per-participant covariance weighting at test time) |
 
 Data: `data/seed_iv_one.npz` (Kaggle dataset `anshattre/dataset-111`) and
 `data/seed_iv_all.npz` (private Kaggle dataset `anshattre/seed-iv-all-giflow`).
