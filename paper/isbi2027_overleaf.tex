@@ -173,14 +173,17 @@ the band estimates. $T$ is chosen on validation participants.
 \section{Experiments}
 
 \textbf{Data.} SEED-IV \cite{zheng2019emotionmeter}: 15 participants, 62
-channels, band-passed 0.5--75~Hz and resampled to 200~Hz per 4~s trial,
-non-overlapping 100-sample windows, up to 15{,}000 windows. Participants 7,
+channels, 17 recordings. We start from a preprocessed version in 4~s
+segments at 250~Hz that was already normalized and soft-clipped to
+$\pm5$, band-pass it to 0.5--75~Hz, resample to 200~Hz per segment, and
+cut non-overlapping 100-sample windows, up to 15{,}000 in total. Participants 7,
 10 and 15 are held out for testing and 6 and 12 for validation; the rest
 train. Signals are standardized with training statistics. Each seed (0, 1,
 2) hides a different random half of the electrodes.
 
 \textbf{Metrics.} NMSE is the squared error over all hidden entries divided by
-their energy, in source units; we also report Pearson correlation (PCC).
+their energy, in the units of the preprocessed data; we also report
+Pearson correlation (PCC).
 Means $\pm$ standard deviations are over seeds (population SD). NMSE that
 averages per window and channel weights low-power channels heavily: on our
 data it doubles the spline's NMSE (0.14 to 0.29), so values from papers with
