@@ -355,6 +355,8 @@ plain kriging reaches 0.0757 / 0.0912 / 0.0821 (spline 0.1360 / 0.1504 /
 | Longer training (150 epochs, patience 15) | 0.3181, identical | Early stopping picked the same epochs (2 / 7 / 2). |
 | Test-time adaptation, 100 steps (`--tta-steps 100`) | 0.2361 vs 0.2196 (worse, every seed) | Fine-tuning on the visible electrodes of one participant overfits them. |
 | Ensemble of 3 (`--ensemble 3`) | 0.2186 vs 0.2196 (−0.5%) | Members make nearly the same errors; three times the cost. |
+| Validation every 25 steps instead of 100 (REG settings) | 0.1346 vs 0.1357 (−0.8%) | Best checkpoint at steps 25–125; the network learns a generic correction almost at once, then overfits. |
+| Layout-matched training (`--train-layout-prob 0.5`) | 0.1346, same as without | Random whole-electrode targets already cover the eval layout. |
 | Blend with the mixture source instead of FP (`--blend-with source`) | No gain on smoke test (w = 1.0) | The trained flow already improves on its own source. |
 | Training channel dropout on top of point subsampling (earlier E-series) | 2.6% worse | Training context became far sparser than evaluation. |
 | Forced spatial smoothing `--min-tau-s 0.25` (earlier E-series) | 0.8% worse | The heat-kernel prior is the weak source either way. |
