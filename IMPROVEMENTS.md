@@ -446,3 +446,11 @@ Sources:
 
 Data: `data/seed_iv_one.npz` (Kaggle dataset `anshattre/dataset-111`) and
 `data/seed_iv_all.npz` (private Kaggle dataset `anshattre/seed-iv-all-giflow`).
+
+## DEAP replication (2026-11-02, Aadra's RTX 4050, packed with scripts/pack_deap.py)
+
+Subject split (test 7/10/15), 50% channel loss, 3 seeds, global NMSE (blend unless noted):
+spline 0.9812, KNN 0.9463, FP 0.8287, kriging pooled 0.5478, participant-weighted (T=0.5) 0.5315;
+GiFlow paper config 1.6599 +- 0.9750 (seeds 0.980/0.961/3.04); spline-anchored flow 0.6767
+(best step 0/0/100, gain comes from source mixture); regression control 0.6225;
+kriging-source flow 0.5426 (alone 0.5591), + adapted cov 0.5271. Same conclusion as SEED-IV.
