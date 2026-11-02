@@ -38,7 +38,7 @@ and covariance kriging, a linear predictor that requires no training,
 performs better (0.116 when training participants are weighted by their
 similarity to the test participant). The DEAP dataset shows the same
 pattern, with kriging reducing NMSE from 0.98 to 0.53 and no learned model
-surpassing it.
+improving on it by more than 1\%.
 \end{abstract}
 
 \begin{keywords}
@@ -85,8 +85,8 @@ DEAP;
 \item an analysis of why GiFlow underperforms on EEG, including a
 regression control (the same network without flow matching) that
 isolates the contribution of flow matching;
-\item a proposed participant-weighted covariance kriging that outperforms
-all learned models we evaluated on both the 62-electrode SEED-IV and the
+\item a proposed participant-weighted covariance kriging that matches
+(within 1\%) or outperforms all learned models we evaluated on both the 62-electrode SEED-IV and the
 32-electrode DEAP montage.
 \end{itemize}
 
@@ -133,9 +133,9 @@ spatial and temporal attention with graph message passing is then trained
 by flow matching \cite{lipman2023flow} along the linear path
 $X_t=(1-t)X_0+tX$, regressing the velocity $X-X_0$ on the hidden entries.
 At inference, $v_\theta$ is integrated from $X_0$ in 10 Euler steps and the
-observed entries are restored. Since \cite{zhang2026giflow} bounds the
-imputation error by the transport cost $\mathbb{E}\|X-X_0\|^2$, a more
-accurate source is expected to improve the result. We use our own
+observed entries are restored. Since a source closer to the data reduces
+the transport cost $\mathbb{E}\|X-X_0\|^2$ of the flow \cite{zhang2026giflow},
+a more accurate source is expected to improve the result. We use our own
 implementation of GiFlow.
 
 Applied to EEG SR, this design has three limitations. (i)~If the
@@ -178,7 +178,7 @@ the visible electrodes $v$ \cite{cressie1993statistics},
 \hat X_h=\Sigma_{hv}(\Sigma_{vv}+\lambda I)^{-1}X_v,
 \end{equation}
 where $\Sigma$ is the second-moment matrix of the training participants
-and $\lambda=10^{-2}$. Whereas the spline imposes a smoothness prior,
+and $\lambda$ is $10^{-2}$ times the mean electrode variance. Whereas the spline imposes a smoothness prior,
 kriging uses the empirically observed inter-electrode correlations.
 
 \emph{Step-level early stopping.} We validate every 25--100 steps, reduce
@@ -240,8 +240,8 @@ divided by their total energy; Pearson correlation (PCC) is additionally
 given for the spline and kriging. Results are given as mean $\pm$
 population standard deviation over seeds 0, 1 and 2. The NMSE definition
 is consequential: averaging per window and channel instead emphasizes
-low-power channels and doubles the spline's NMSE on our data (0.14 to
-0.29).
+low-power channels and at least doubles the spline's NMSE on our data
+(0.14 to 0.30 for seed 0).
 
 \textbf{Implementation.} Hidden size 64, four propagation layers, batch
 size 32, Adam with EMA weights; Kaggle T4 GPUs for SEED-IV and an RTX
@@ -256,8 +256,8 @@ validation data only.
 \centering
 \small
 \caption{NMSE (lower is better) for 50\% electrode loss on held-out
-participants, mean $\pm$ SD over 3 seeds. Learned models are blended with
-their reference estimate. --: not evaluated.}
+participants, mean $\pm$ SD over 3 seeds. Learned models other than
+published GiFlow are blended with their reference estimate. --: not evaluated.}
 \label{tab:main}
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}lcc@{}}
@@ -308,8 +308,8 @@ Published hyperparameters & 0.3350 & --\\
 \textbf{Baseline GiFlow.} With its published hyperparameters, the GiFlow
 implementation attains an NMSE of 0.335 on SEED-IV (Table~\ref{tab:main}),
 more than twice that of the spline (0.150) and higher than that of
-$k$-NN. When the source mixture is learned, the heat kernel receives only
-7--10\% of the weight.
+$k$-NN. When the source mixture is learned, the heat kernel receives at most
+11\% of the weight.
 
 \textbf{Effect of the modifications.} Table~\ref{tab:ablation} reports the
 modifications cumulatively. Full-montage training with a mixed source
@@ -318,8 +318,9 @@ receives 54--56\% of the weight, yields a further 37\% reduction.
 Step-level validation alone has no effect, but combined with a lower
 learning rate and regularization it moves the best checkpoint to 25--125
 steps, and the model alone then outperforms the spline on all three seeds
-(0.1335, 0.1463 and 0.1303 vs 0.1482, 0.1576 and 0.1430). The final
-configuration is the spline-anchored flow in Table~\ref{tab:main} (0.136).
+(0.1335, 0.1463 and 0.1303 vs 0.1482, 0.1576 and 0.1430). The
+spline-anchored flow in Table~\ref{tab:main} uses the weight-decay
+configuration (0.1357).
 
 \textbf{Contribution of flow matching.} The regression control
 (Table~\ref{tab:main}) achieves 0.133 blended and 0.137 alone, matching
@@ -327,15 +328,14 @@ the flow.
 
 \textbf{Kriging.} Pooled kriging attains 0.127 without any training, and
 participant weighting reduces this to 0.116 (PCC 0.940 vs 0.925 for the
-spline), below every learned model. Band-wise covariances give 0.114,
+spline), below every learned model without kriging in its source. Band-wise covariances give 0.114,
 although the variant preferred on validation attains 0.120. When kriging is included in the anchored source
 (Anchored Flow, + kriging), it receives 99\% of the mixture weight, and
 the flow performs no better than kriging alone (0.127 vs 0.127, and 0.116
 vs 0.116 with participant weighting). The validation-fitted blend weights
 (0, 0 and 0.30) confirm that the network learns no correction that
-generalizes to new participants. SRGDiff-style residual guidance and step
-modulation \cite{liu2026srgdiff} (SRG-style flow) do not change this
-result.
+generalizes to new participants. The SRG-style flow, with SRGDiff residual
+guidance \cite{liu2026srgdiff}, gives the same result.
 
 \textbf{DEAP.} On the sparser 32-electrode montage, the spline performs
 close to the trivial zero predictor (0.981, PCC 0.55), whereas kriging
@@ -360,7 +360,8 @@ generative model, as the anchored source accounts for most of the
 improvement and a network without flow matching performs equally well.
 Third, the spherical spline is an insufficient reference: a kriging
 predictor based on training covariances, weighted towards participants
-similar to the new one, outperformed every learned model on both datasets.
+similar to the new one, matched or outperformed every learned model on
+both datasets.
 Future work should evaluate settings in which flow models may still be
 advantageous, such as contiguous missing regions, very sparse montages and
 generative uses such as uncertainty estimation, and should reproduce
