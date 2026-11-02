@@ -205,8 +205,10 @@ training participant $p$ the weight
 \omega_p\propto\exp\!\big(-d_p/(T\,\mathrm{sd}(d))\big),\qquad
 d_p=\|C_v-C^{(p)}_v\|_F,
 \end{equation}
-where $C^{(p)}_v$ is computed over the same visible electrodes. Kriging is
-then performed with $\sum_p\omega_p\Sigma^{(p)}$. Only the visible
+where $C^{(p)}_v$ uses the same visible electrodes and $\mathrm{sd}(d)$ is
+the standard deviation of $d_p$ over $p$. Kriging then uses
+$\sum_p\omega_p\Sigma^{(p)}$, with $\Sigma^{(p)}$ the second-moment matrix
+of participant $p$. Only the visible
 electrodes of the new participant are used, but $C_v$ is estimated from
 all of their test windows; the method is therefore transductive and
 requires some prior recording from the participant. A variant fits one
@@ -232,7 +234,7 @@ scaled by one factor (preserving its topography) and soft-clipped with
 $5\tanh(x/5)$, as for SEED-IV.
 
 Both datasets are divided into non-overlapping 100-sample windows (at most
-15{,}000). Participants 7, 10 and 15 are held out for testing and 6 and 12
+15{,}000 in total, evenly subsampled). Participants 7, 10 and 15 are held out for testing and 6 and 12
 for validation; the remainder are used for training. Signals are
 standardized using training statistics.
 
@@ -288,7 +290,8 @@ SRG-style flow, + kriging & 0.127 $\pm$ 0.010 & --\\
 \centering
 \small
 \caption{Ablation on SEED-IV, adding one modification at a time to GiFlow
-with published hyperparameters (NMSE of the model alone and blended).}
+with published hyperparameters (NMSE of the model alone and blended
+with FP in the first modified row and with the spline thereafter).}
 \label{tab:ablation}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lcc@{}}
@@ -314,7 +317,7 @@ $k$-NN. When the source mixture is learned, the heat kernel receives at most
 
 \textbf{Effect of the modifications.} Table~\ref{tab:ablation} reports the
 modifications cumulatively. Full-montage training with a mixed source
-reduces NMSE by 29\%, and including the spline in the mixture, where it
+(heat kernel, FP and $k$-NN) reduces NMSE by 29\%, and including the spline in the mixture, where it
 receives 54--56\% of the weight, yields a further 37\% reduction.
 Step-level validation alone has no effect, but combined with a lower
 learning rate and regularization it moves the best checkpoint to 25--125
