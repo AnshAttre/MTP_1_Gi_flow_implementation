@@ -225,10 +225,10 @@ band-pass filter to 0.5--75~Hz and resample to 200~Hz.
 DEAP \cite{koelstra2012deap} contains 32 participants with 32 EEG
 channels. From the raw BioSemi recordings, we apply an average reference,
 band-pass filter to 0.5--75~Hz, resample to 200~Hz and extract 60 evenly
-spaced 5~s segments per participant. Since raw amplitudes differ by two
-orders of magnitude across DEAP participants, each recording is centred
-per channel, scaled by a single factor (preserving its topography) and
-soft-clipped with $5\tanh(x/5)$, consistent with the SEED-IV input.
+spaced 5~s segments per participant. As amplitudes differ by two orders
+of magnitude across participants, each recording is centred per channel,
+scaled by one factor (preserving its topography) and soft-clipped with
+$5\tanh(x/5)$, as for SEED-IV.
 
 Both datasets are divided into non-overlapping 100-sample windows (at most
 15{,}000). Participants 7, 10 and 15 are held out for testing and 6 and 12
@@ -241,8 +241,7 @@ given for the spline and kriging. Results are given as mean $\pm$
 population standard deviation over seeds 0, 1 and 2. The NMSE definition
 is consequential: averaging per window and channel instead emphasizes
 low-power channels and doubles the spline's NMSE on our data (0.14 to
-0.29). Values obtained under other definitions or montages are therefore
-not directly comparable.
+0.29).
 
 \textbf{Implementation.} Hidden size 64, four propagation layers, batch
 size 32, Adam with EMA weights; Kaggle T4 GPUs for SEED-IV and an RTX
@@ -324,16 +323,12 @@ configuration is the spline-anchored flow in Table~\ref{tab:main} (0.136).
 
 \textbf{Contribution of flow matching.} The regression control
 (Table~\ref{tab:main}) achieves 0.133 blended and 0.137 alone, matching
-the flow. Given a strong source, iterative transport provides no
-measurable benefit over a single learned correction.
+the flow.
 
 \textbf{Kriging.} Pooled kriging attains 0.127 without any training, and
 participant weighting reduces this to 0.116 (PCC 0.940 vs 0.925 for the
 spline), below every learned model. Band-wise covariances give 0.114,
-although the variant preferred on validation attains 0.120. On a single
-participant with a temporal split, where the covariance transfers
-exactly, kriging reaches $0.083\pm0.006$ compared with $0.143\pm0.006$ for
-the spline. When kriging is included in the anchored source
+although the variant preferred on validation attains 0.120. When kriging is included in the anchored source
 (Anchored Flow, + kriging), it receives 99\% of the mixture weight, and
 the flow performs no better than kriging alone (0.127 vs 0.127, and 0.116
 vs 0.116 with participant weighting). The validation-fitted blend weights
