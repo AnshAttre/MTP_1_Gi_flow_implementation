@@ -4,8 +4,6 @@
 \usepackage{cite}
 \usepackage{url}
 \usepackage{xcolor}
-\usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning}
 
 % Values still being computed are marked in red; remove before submission.
 \newcommand{\tbd}[1]{\textcolor{red}{#1}}
@@ -102,40 +100,16 @@ learned correction and the source, not from flow matching itself.
 
 \section{Method}
 
-\begin{figure}[t]
+\begin{figure*}[t]
 \centering
-\resizebox{\columnwidth}{!}{%
-\begin{tikzpicture}[
-  >=Latex, node distance=0.28cm and 0.45cm,
-  box/.style={draw, rounded corners, align=center, font=\footnotesize,
-              inner sep=3pt, minimum height=0.75cm},
-  src/.style={box, fill=gray!8, text width=2.3cm, minimum height=0.55cm},
-  key/.style={src, fill=yellow!20},
-  arr/.style={-{Latex[length=1.6mm]}, thick}]
-\node[box, fill=blue!10, text width=1.7cm] (in) {EEG window\\$N/2$ visible,\\$N/2$ failed};
-\node[src, right=0.6cm of in, yshift=1.55cm] (s1) {Heat kernel};
-\node[src, below=of s1] (s2) {Feature propagation};
-\node[src, below=of s2] (s3) {$k$-NN average};
-\node[key, below=of s3] (s4) {Spherical spline};
-\node[key, below=of s4] (s5) {Kriging (participant-weighted)};
-\node[box, fill=green!12, text width=2.0cm, right=0.6cm of s3] (mix)
-  {Anchored source $X_0$\\per-electrode\\softmax mixture};
-\node[box, fill=violet!12, text width=1.9cm, right=of mix] (vf)
-  {GiFlow vector field\\10 Euler steps};
-\node[box, fill=green!12, text width=1.7cm, right=of vf] (bl)
-  {Blend with\\spline/kriging\\($w$ on val.)};
-\node[box, fill=blue!10, text width=1.5cm, below=0.5cm of bl] (out)
-  {Full-montage\\reconstruction};
-\foreach \s in {s1,s2,s3,s4,s5} {\draw[arr] (in.east) -- (\s.west); \draw[arr] (\s.east) -- (mix.west);}
-\draw[arr] (mix) -- (vf);
-\draw[arr] (vf) -- (bl);
-\draw[arr] (bl) -- (out);
-\end{tikzpicture}}
-\caption{Anchored Flow. Classical estimates of the failed electrodes are
-mixed per electrode to form the flow source; the GiFlow vector field refines
-it and the output is blended with a reference estimate.}
+\includegraphics[width=\textwidth]{figures/anchored_flow_pipeline.pdf}
+\caption{Anchored Flow. Half of the electrodes have failed (red). Five
+classical estimators fill them in, a learned per-electrode mixture $\pi$
+combines them into the source $X_0$, flow matching refines $X_0$ towards
+$\hat X$ in 10 Euler steps, and the result is blended with the kriging or
+spline estimate (weight $w$ fitted on validation participants).}
 \label{fig:pipeline}
-\end{figure}
+\end{figure*}
 
 \subsection{Task}
 
