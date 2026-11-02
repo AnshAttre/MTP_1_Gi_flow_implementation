@@ -162,7 +162,8 @@ by a per-electrode mixture of $K$ classical estimates $\hat X_k$,
 X_0^{(n)}=\textstyle\sum_k \pi_{nk}\,\hat X_k^{(n)},\qquad
 \pi_{n\cdot}=\operatorname{softmax}(\ell_{n\cdot}),
 \end{equation}
-where $\ell_{n\cdot}\in\mathbb{R}^K$ are learnable logits of electrode $n$.
+where $\hat X_k^{(n)}$ is the $k$-th estimate of electrode $n$, $\pi_{nk}$
+its mixture weight, and $\ell_{n\cdot}\in\mathbb{R}^K$ learnable logits.
 The estimates represent the hidden signal in complementary ways: the heat
 kernel above; feature propagation (FP) \cite{rossi2022unreasonable}, which
 repeatedly averages over spatial-graph neighbours and resets the observed
