@@ -78,7 +78,7 @@ participants. Our contributions are:
 \begin{itemize}
 \setlength{\itemsep}{0pt}
 \item \emph{multi-representation anchoring}, which starts the flow from a
-learned per-electrode mixture of five classical reconstructions and,
+learned per-electrode mixture of classical reconstructions and,
 together with full-montage training and step-level early stopping, reduces
 the NMSE of GiFlow by 59\% on SEED-IV and brings it below the spline on
 DEAP;
@@ -96,8 +96,8 @@ all learned models we evaluated on both the 62-electrode SEED-IV and the
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.9\textwidth]{anchored_flow_pipeline}
-\caption{Anchored Flow. Half of the electrodes are missing (red). Five
-classical estimators reconstruct them, a per-electrode mixture $\pi$
+\caption{Anchored Flow. Half of the electrodes are missing (red). Up to
+five classical estimators reconstruct them, a per-electrode mixture $\pi$
 combines the estimates into the source $X_0$, flow matching transports
 $X_0$ to $\hat X$ in 10 Euler steps, and the output is blended with the
 kriging or spline estimate using a weight $w$ fitted on validation
@@ -121,8 +121,8 @@ participants.
 
 GiFlow \cite{zhang2026giflow} uses two graphs. In the spatial graph, the
 nodes are the $N$ electrodes, and two electrodes are connected when a
-Gaussian kernel of their correlation distance $1-|\rho|$, computed on the
-training data, exceeds 0.1. In the temporal graph, the nodes are the $R$
+Gaussian kernel of their correlation distance $1-|\rho|$, computed from the
+pooled recordings, exceeds 0.1. In the temporal graph, the nodes are the $R$
 time samples of a window, and each sample is connected to its neighbours
 (a chain). With the Laplacians $L_s$ and $L_t$ of these graphs, the
 \emph{heat-kernel source}
@@ -157,7 +157,7 @@ windows, and randomly selected whole electrodes (each with probability
 evaluation mask.
 
 \emph{Multi-representation anchoring.} The heat-kernel source is replaced
-by a per-electrode mixture of $K=5$ classical estimates $\hat X_k$,
+by a per-electrode mixture of $K$ classical estimates $\hat X_k$,
 \begin{equation}
 X_0^{(n)}=\textstyle\sum_k \pi_{nk}\,\hat X_k^{(n)},\qquad
 \pi_{n\cdot}=\operatorname{softmax}(\ell_{n\cdot}),
@@ -169,7 +169,7 @@ repeatedly averages over spatial-graph neighbours and resets the observed
 entries (40 iterations); $k$-NN, the mean of the visible spatial-graph
 neighbours; the spherical spline \cite{perrin1989spherical}, computed from
 10-05 electrode positions, with the cerebellar SEED-IV electrodes CB1/CB2
-placed at I1/I2; and covariance kriging. The logits are fitted on training
+placed at I1/I2; and, optionally, covariance kriging ($K=4$ or 5). The logits are fitted on training
 windows by minimizing the transport cost on hidden entries and then
 frozen, so each electrode relies on the estimator that suits it best.
 Kriging is the best linear predictor of the hidden electrodes $h$ given
@@ -386,8 +386,6 @@ ethical approval was not required.
 \section{Acknowledgments}
 \label{sec:acknowledgments}
 
-The authors declare no conflicts of interest. Claude (Anthropic) assisted
-with code development and language editing.
 
 \begin{thebibliography}{9}
 
