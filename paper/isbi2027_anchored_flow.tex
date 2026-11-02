@@ -4,6 +4,7 @@
 \usepackage{cite}
 \usepackage{url}
 \usepackage{xcolor}
+\graphicspath{{figures/}{./}}
 
 % Values still to be filled in by the authors are marked in red; remove before submission.
 \newcommand{\tbd}[1]{\textcolor{red}{#1}}
@@ -39,6 +40,17 @@ model beats it. Learned EEG reconstruction should be compared against
 such baselines, not only against the spline.
 \end{abstract}
 
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{anchored_flow_pipeline}
+\caption{Anchored Flow. Half of the electrodes have failed (red). Five
+classical estimators fill them in, a per-electrode mixture $\pi$ combines
+them into the source $X_0$, flow matching moves $X_0$ towards $\hat X$ in
+10 Euler steps, and the result is blended with the kriging or spline
+estimate using a weight $w$ fitted on validation participants.}
+\label{fig:pipeline}
+\end{figure*}
+
 \begin{keywords}
 Electroencephalography, missing channels, flow matching, spherical spline,
 kriging
@@ -53,9 +65,7 @@ these channels is rarely an option, since average referencing, source
 localization, connectivity measures and trained classifiers all expect a
 fixed montage. Preprocessing pipelines therefore flag bad channels and
 interpolate them before any analysis \cite{bigdely2015prep}. With dry or
-low-cost headsets and long or mobile recordings, a large part of the
-montage can be unreliable at the same time, and the quality of this
-interpolation starts to matter.
+low-cost headsets, a large part of the montage can be unreliable at once.
 
 The usual tool is spherical-spline interpolation \cite{perrin1989spherical}.
 It fits a smooth surface to the remaining potentials on a spherical head
@@ -93,16 +103,6 @@ learned model we trained, on a 62- and a 32-electrode montage.
 \section{Method}
 \label{sec:method}
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.94\textwidth]{figures/anchored_flow_pipeline.pdf}
-\caption{Anchored Flow. Half of the electrodes have failed (red). Five
-classical estimators fill them in, a per-electrode mixture $\pi$ combines
-them into the source $X_0$, flow matching moves $X_0$ towards $\hat X$ in
-10 Euler steps, and the result is blended with the kriging or spline
-estimate using a weight $w$ fitted on validation participants.}
-\label{fig:pipeline}
-\end{figure*}
 
 \subsection{Problem setting}
 
@@ -291,8 +291,7 @@ of the weight, removes another 37\%. More frequent validation does nothing
 on its own, but together with a lower learning rate and regularization the
 best checkpoint moves to 25--125 steps, and the model alone beats the
 spline on all three seeds (0.1335, 0.1463, 0.1303 against 0.1482, 0.1576,
-0.1430). Ensembling three models ($-0.5\%$) and fine-tuning on each test
-participant ($+7.5\%$) did not help.
+0.1430).
 
 \textbf{Is it the flow?} To find out, we trained the same network to
 predict $X-X_0$ in a single step at $t=0$ and used one-step inference.
@@ -336,11 +335,9 @@ source accounts for most of the improvement, and a network without flow
 matching does just as well from it. And the spline is the wrong bar to
 measure against. A kriging predictor built from training covariances,
 weighted towards participants who resemble the new one, beat every
-learned model on both datasets. In an earlier pilot with a different
-protocol (raw data, heat-kernel source, one seed), training GiFlow on DEAP
-and SEED-IV jointly did lower its NMSE compared with single-dataset
-training (DEAP 0.633 to 0.592, SEED-IV 0.757 to 0.633), but it still did
-not beat $k$-NN on the average of the two (0.613 vs 0.602).
+learned model on both datasets. In an earlier pilot (raw data, heat-kernel
+source, one seed), joint training on DEAP and SEED-IV helped GiFlow but
+still did not beat $k$-NN (macro NMSE 0.613 vs 0.602).
 
 \textbf{Limitations.} We used three test participants per dataset, three
 seeds, random electrode subsets and short (0.5~s) windows; differences of
