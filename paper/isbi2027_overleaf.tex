@@ -5,7 +5,7 @@
 \usepackage{url}
 \usepackage{xcolor}
 
-% Values still being computed are marked in red; remove before submission.
+% Values still to be filled in by the authors are marked in red; remove before submission.
 \newcommand{\tbd}[1]{\textcolor{red}{#1}}
 
 \title{Anchored Flow Matching for EEG Electrode Recovery:\\
@@ -19,26 +19,24 @@ email@example.com}
 \maketitle
 
 \begin{abstract}
-Recovering EEG electrodes that fail during a recording is usually done with
-spherical-spline interpolation, while recent work proposes deep generative
-models. We study graph-informed flow matching (GiFlow) for 50\% whole-electrode
-loss on SEED-IV with participants held out. Our implementation with the
-published hyperparameters is far weaker than the spline (normalized
-mean-squared error, NMSE, 0.335 vs 0.150). We identify three causes: our
-initial masking protocol never trained the model on the electrodes it is
-scored on, the heat-kernel source is a poor starting point for EEG, and the
-model overfits training participants within one epoch. We fix them
-with full-montage training, an \emph{anchored} source that mixes classical
-estimates per electrode (feature propagation, nearest neighbours, spherical
-spline, covariance kriging), and step-level early stopping, reducing NMSE by
-59\% to 0.136 and beating the spline on every seed. Two controls temper this
-gain: a non-generative network with the same source matches the flow
-(0.133), and a linear kriging predictor that weights training participants by
-the similarity of their visible-electrode correlations reaches 0.114. Given
-kriging as its source, the flow no longer improves on it (0.116 vs 0.116).
-The same holds on DEAP, where kriging cuts the spline's NMSE from 0.98 to
-0.53. We argue that EEG reconstruction models should be compared against such
-tuned linear baselines.
+When EEG electrodes fail during a recording, their signals are usually
+filled in with spherical-spline interpolation, although deep generative
+models have recently been proposed for the job. We test one of them,
+graph-informed flow matching (GiFlow), on recordings in which half of the
+electrodes are missing, evaluating on participants unseen in training.
+With its published hyperparameters our implementation does much worse
+than the spline on SEED-IV (normalized mean-squared error, NMSE, 0.335 vs
+0.150). We trace this to the training mask, the heat-kernel starting point
+of the flow and fast overfitting, and fix all three. The resulting model,
+which starts the flow from a per-electrode mixture of classical estimates,
+cuts NMSE by 59\% to 0.136 and beats the spline on every seed. Two
+controls put this gain in perspective. The same network trained without
+flow matching does as well (0.133), and covariance kriging, a linear
+predictor that needs no training, does better (0.116 when each new
+participant is matched to similar training participants). On DEAP the
+picture is the same: kriging lowers NMSE from 0.98 to 0.53 and no learned
+model beats it. Learned EEG reconstruction should be compared against
+such baselines, not only against the spline.
 \end{abstract}
 
 \begin{keywords}
@@ -47,402 +45,337 @@ kriging
 \end{keywords}
 
 \section{Introduction}
+\label{sec:intro}
 
-Electroencephalography (EEG) is recorded with tens to hundreds of scalp
-electrodes, and some of them routinely fail: an electrode detaches, its gel
-dries, its impedance drifts, or its amplifier saturates. The affected
-channels must then be removed or reconstructed. Removing them is costly,
-because most downstream analyses assume a fixed montage: source
-localization and connectivity estimates depend on spatial coverage, average
-referencing is biased by missing sites, and classifiers trained on a full
-montage cannot be applied to a reduced one. Automated preprocessing pipelines
-therefore detect bad channels and interpolate them before any analysis
-\cite{bigdely2015prep}. The problem becomes harder as more electrodes fail,
-as in long or mobile recordings and in low-cost headsets with dry
-electrodes, where a large fraction of the montage can be unreliable at once.
+Some electrodes fail in almost every EEG session. They come loose, their
+gel dries, or their impedance drifts until the trace is useless. Dropping
+these channels is rarely an option, since average referencing, source
+localization, connectivity measures and trained classifiers all expect a
+fixed montage. Preprocessing pipelines therefore flag bad channels and
+interpolate them before any analysis \cite{bigdely2015prep}. With dry or
+low-cost headsets and long or mobile recordings, a large part of the
+montage can be unreliable at the same time, and the quality of this
+interpolation starts to matter.
 
-The standard reconstruction is spherical-spline interpolation
-\cite{perrin1989spherical}. It fits a smooth function to the visible
-potentials on a spherical head model and evaluates it at the missing sites,
-using only electrode positions. It needs no training data, but it ignores
-the temporal structure of the signal and the correlations that a particular
-person's brain and head produce between electrodes. Learned methods aim to
-exploit both. Convolutional networks have been trained to restore or
-upsample EEG channels \cite{svantesson2021virtual}, diffusion models
-generate missing channels for EEG spatial super-resolution
-\cite{liu2026srgdiff}, and graph-informed flow matching (GiFlow)
-\cite{zhang2026giflow} was recently proposed for spatiotemporal imputation
-on sensor graphs. GiFlow starts a flow-matching model
-\cite{lipman2023flow} from a graph heat-kernel estimate of the missing
-values rather than from noise, which shortens the transport path and
-improves imputation on traffic and air-quality benchmarks. Whether such
-models beat well-tuned classical interpolation for EEG, under evaluation on
-people the model has not seen, remains unclear: reported comparisons
-usually include only the spline, and they use different error definitions,
-montages and data splits.
+The usual tool is spherical-spline interpolation \cite{perrin1989spherical}.
+It fits a smooth surface to the remaining potentials on a spherical head
+and reads off the missing sites. It is fast and needs no data, but it
+knows only electrode positions; it ignores how a given person's signals
+actually co-vary across the scalp, and it ignores time. Learned models try
+to use both. Convolutional networks have been trained to restore or
+upsample EEG channels \cite{svantesson2021virtual}, diffusion models have
+been used for EEG spatial super-resolution \cite{liu2026srgdiff}, and
+graph-informed flow matching (GiFlow) \cite{zhang2026giflow} was recently
+proposed for imputation on sensor networks. GiFlow is attractive here
+because it does not start its flow \cite{lipman2023flow} from noise but
+from a graph-diffused estimate of the missing values, so the network only
+has to learn a correction. Most of this work compares against the spline
+alone, though, and with different error definitions, montages and splits,
+so it is hard to tell how much is really gained.
 
-In this paper we apply GiFlow to the recovery of whole failed electrodes
-when half of the montage is missing, on SEED-IV
-\cite{zheng2019emotionmeter} and DEAP \cite{koelstra2012deap} with
-participants held out, and make four contributions. (i) We show that GiFlow,
-implemented with its published hyperparameters, is far weaker than
-spherical-spline interpolation for EEG, and we trace this to the training
-protocol, the source distribution and overfitting. (ii) We propose
-\emph{Anchored Flow}: the flow starts from a per-electrode mixture of
-classical estimates, fitted by minimizing the transport cost, and is
-trained on the full montage with step-level early stopping. This reduces
-NMSE by 59\% on SEED-IV and beats the spline on every seed. (iii) We show
-that a linear kriging predictor built from training-participant
-covariances, re-weighted for each new participant using only their visible
-electrodes, is stronger still on both datasets. (iv) Through a
-non-generative control we show that the gain over the spline comes from the
-learned correction and the source, not from flow matching itself.
+We set out to apply GiFlow to recordings in which half of the electrodes
+have failed, on SEED-IV \cite{zheng2019emotionmeter} and DEAP
+\cite{koelstra2012deap}, always testing on held-out participants. Our
+first result was negative: with the published hyperparameters the model
+was more than twice as bad as the spline. This paper describes what went
+wrong and what we learned while fixing it. Our contributions are:
+\begin{itemize}
+\setlength{\itemsep}{0pt}
+\item a diagnosis of why GiFlow underperforms on EEG, and three fixes
+(full-montage training, an anchored source, step-level early stopping)
+that together reduce NMSE by 59\% on SEED-IV;
+\item a regression control showing that the gain comes from the learned
+correction and the source, not from flow matching itself;
+\item a participant-weighted covariance kriging baseline that beats every
+learned model we trained, on a 62- and a 32-electrode montage.
+\end{itemize}
 
 \section{Method}
+\label{sec:method}
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/anchored_flow_pipeline.pdf}
+\includegraphics[width=0.94\textwidth]{figures/anchored_flow_pipeline.pdf}
 \caption{Anchored Flow. Half of the electrodes have failed (red). Five
-classical estimators fill them in, a learned per-electrode mixture $\pi$
-combines them into the source $X_0$, flow matching refines $X_0$ towards
-$\hat X$ in 10 Euler steps, and the result is blended with the kriging or
-spline estimate (weight $w$ fitted on validation participants).}
+classical estimators fill them in, a per-electrode mixture $\pi$ combines
+them into the source $X_0$, flow matching moves $X_0$ towards $\hat X$ in
+10 Euler steps, and the result is blended with the kriging or spline
+estimate using a weight $w$ fitted on validation participants.}
 \label{fig:pipeline}
 \end{figure*}
 
-\subsection{Task}
+\subsection{Problem setting}
 
-Let $X\in\mathbb{R}^{N\times R}$ be a window of $N$ electrodes ($N=62$ for
-SEED-IV, 32 for DEAP) and $R$ samples. A fixed random half of the
-electrodes (one set per seed) is hidden for every test participant, which
-models a recording in which these electrodes failed. The model sees
-$X_{\mathrm{cond}}=M\odot X$, where the binary mask $M$ zeroes the hidden
-electrodes, and is scored only on the hidden entries. Training participants
-have all electrodes, as in a lab that records a full montage for training
-and deploys the model on recordings with failed electrodes. Test
-participants never appear in training or model selection.
+A window $X\in\mathbb{R}^{N\times R}$ holds $N$ electrodes ($N=62$ for
+SEED-IV, 32 for DEAP) and $R$ time samples. For every test participant
+the same random half of the electrodes is hidden, as if those electrodes
+had failed for the whole session; a new half is drawn for each seed. The
+model receives $X_{\mathrm{cond}}=M\odot X$, where the binary mask $M$
+zeroes the hidden electrodes, and is scored only on what was hidden.
+Training participants keep all their electrodes. This matches a lab that
+collects full-montage data once and later has to repair recordings from
+new people.
 
 \subsection{GiFlow}
 
-GiFlow \cite{zhang2026giflow} first builds a source estimate
-$X_0=\exp(-\tau_sL_s)\,X_{\mathrm{cond}}\,\exp(-\tau_tL_t)$ by heat
-diffusion on a spatial graph (Laplacian $L_s$, from electrode correlations
-on training data) and a temporal chain graph ($L_t$); the diffusion times
-$\tau_s,\tau_t$ are fitted first. It then learns a vector field
-$v_\theta(X_t,t,X_{\mathrm{cond}})$ by flow matching \cite{lipman2023flow}
-on the straight path $X_t=(1-t)X_0+tX$, regressing the target velocity
-$X-X_0$ on hidden entries. The network alternates spatial and temporal
-attention with graph message passing. Imputation integrates $v_\theta$ from
-$X_0$ with 10 Euler steps and then restores the visible entries. GiFlow's
-analysis bounds the imputation error by the transport cost
-$\mathbb{E}\|X-X_0\|^2$, so the quality of the source matters.
+GiFlow \cite{zhang2026giflow} first diffuses the observed values over a
+spatial graph (Laplacian $L_s$, built from electrode correlations in the
+training data) and a temporal chain graph ($L_t$):
+$X_0=\exp(-\tau_sL_s)\,X_{\mathrm{cond}}\,\exp(-\tau_tL_t)$, with
+$\tau_s,\tau_t$ fitted beforehand. A network $v_\theta$, which alternates
+spatial and temporal attention with graph message passing, is then
+trained by flow matching \cite{lipman2023flow} on the straight path
+$X_t=(1-t)X_0+tX$, regressing the velocity $X-X_0$ on hidden entries. At
+test time $v_\theta$ is integrated from $X_0$ in 10 Euler steps and the
+visible entries are put back. The analysis in \cite{zhang2026giflow}
+bounds the error by the transport cost $\mathbb{E}\|X-X_0\|^2$, which
+suggests that a better starting point should give a better result.
 
 \subsection{Anchored Flow}
 
-Fig.~\ref{fig:pipeline} summarizes our changes, which address three
-problems we found when applying GiFlow to EEG.
+Fig.~\ref{fig:pipeline} shows the full pipeline. We changed three things.
 
-\textbf{Full-montage training.} In our initial protocol the evaluation
-mask was applied to the whole recording, so the scored electrodes were also
-hidden in training windows and never served as targets. We reveal them in
-training windows and instead hide random whole electrodes (probability 0.5
-each) as training targets; validation and test windows keep the evaluation
-mask.
+\emph{Full-montage training.} In our first protocol the evaluation mask
+was applied to whole recordings, so the electrodes we scored were also
+hidden in every training window and never served as targets. We now keep
+all electrodes visible in training windows and hide random whole
+electrodes (each with probability 0.5) as targets. Validation and test
+windows keep the evaluation mask.
 
-\textbf{Anchored source.} We replace the heat-kernel source with a
-per-electrode mixture
+\emph{Anchored source.} Instead of the heat-kernel estimate alone, the
+flow starts from a per-electrode mixture
 \begin{equation}
 X_0^{(n)}=\textstyle\sum_k \pi_{nk}\,\hat X_k^{(n)},\qquad
 \pi_{n\cdot}=\operatorname{softmax}(\ell_{n\cdot}),
 \end{equation}
-of $K$ classical estimates $\hat X_k$ of electrode $n$: the heat kernel,
-feature propagation (FP) \cite{rossi2022unreasonable}, $k$-nearest-neighbour
-averaging, the spherical spline \cite{perrin1989spherical} computed from
-10-05 electrode positions, and covariance kriging. The logits $\ell$ are
-fitted on training windows by minimizing the hidden-entry transport cost
-$\|X-X_0\|^2$ and then frozen, so each electrode uses the estimator that
-works best for it. Kriging predicts the hidden electrodes $h$ from the
-visible ones $v$ as
+of $K$ classical estimates $\hat X_k$: the heat kernel, feature
+propagation (FP) \cite{rossi2022unreasonable}, $k$-nearest-neighbour
+averaging, the spherical spline \cite{perrin1989spherical} on 10-05
+electrode positions, and covariance kriging. The logits $\ell$ are fitted
+on training windows by minimizing the transport cost on hidden entries and
+then frozen, so each electrode leans on whichever estimator works best for
+it. Kriging is the best linear predictor of the hidden electrodes $h$
+from the visible ones $v$ \cite{cressie1993statistics},
 \begin{equation}
 \hat X_h=\Sigma_{hv}(\Sigma_{vv}+\lambda I)^{-1}X_v,
 \end{equation}
-the best linear predictor \cite{cressie1993statistics} under the
-second-moment matrix $\Sigma$ of the training participants, with ridge
-$\lambda=10^{-2}$. Unlike the spline, it uses the correlations that are
-actually observed between electrodes rather than a smoothness prior.
+where $\Sigma$ is the second-moment matrix of the training participants
+and $\lambda=10^{-2}$. Where the spline assumes smoothness, kriging uses
+the correlations that were actually measured.
 
-\textbf{Step-level early stopping.} With per-epoch validation, the best
-checkpoint was always after the first epoch, a sign that the network
-overfits the training participants quickly. We validate every 25--100
+\emph{Step-level early stopping.} With validation once per epoch the best
+checkpoint was always the first one, so the network was overfitting the
+training participants within a single epoch. We validate every 25--100
 steps, lower the learning rate to $10^{-4}$, and add weight decay
-$5\times10^{-4}$ and dropout 0.3.
+($5\times10^{-4}$) and dropout (0.3).
 
-\textbf{Blending.} The output can be blended with the spline or kriging
-estimate, $w\hat X_{\mathrm{model}}+(1-w)\hat X_{\mathrm{ref}}$, with
-$w\in[0,1]$ fitted by least squares on validation participants, so the
-model is used only as far as it helps on unseen people.
+Finally, the output can be blended with the spline or kriging estimate,
+$w\hat X_{\mathrm{model}}+(1-w)\hat X_{\mathrm{ref}}$, where $w\in[0,1]$
+is fitted by least squares on validation participants. If the model does
+not help on unseen people, $w$ goes to zero.
 
 \subsection{Participant-weighted kriging}
 
-Spatial covariance differs between people, through head shape, electrode
-placement and brain anatomy. For a new participant we compute the
-correlation matrix of their visible electrodes $C_v$ and weight each
-training participant $p$ by $\omega_p\propto\exp(-d_p/(T\,\mathrm{sd}(d)))$,
-where $d_p=\|C_v-C^{(p)}_v\|_F$ compares the same visible electrodes, then
-krige with $\sum_p\omega_p\Sigma^{(p)}$. Only visible electrodes of the new
-participant are used, but all of that participant's test windows are pooled
-to estimate $C_v$, so the method is transductive and needs some recording
-from the participant first. We also fit one covariance per frequency band
-($<4$, 4--8, 8--13, 13--30, $\geq$30~Hz) and sum the band estimates. The
-temperature $T$ is chosen on validation participants. The same weighted
-covariance can replace the pooled one inside the anchored source.
+A single pooled covariance ignores that people differ in head shape,
+electrode placement and anatomy. For a new participant we therefore
+compute the correlation matrix $C_v$ of their visible electrodes and give
+each training participant $p$ the weight
+$\omega_p\propto\exp(-d_p/(T\,\mathrm{sd}(d)))$ with
+$d_p=\|C_v-C^{(p)}_v\|_F$, comparing the same visible electrodes. We then
+krige with $\sum_p\omega_p\Sigma^{(p)}$. Only visible electrodes of the
+new participant are used, but $C_v$ is estimated from all of their test
+windows, so the method is transductive: it needs some recording from the
+person before it can be applied. A variant fits one covariance per
+frequency band ($<4$, 4--8, 8--13, 13--30, $\geq$30~Hz) and sums the band
+estimates. The temperature $T$ is chosen on validation participants, and
+the weighted covariance can also replace the pooled one inside the
+anchored source.
 
 \section{Experiments}
+\label{sec:experiments}
 
-\textbf{Data.} SEED-IV \cite{zheng2019emotionmeter}: 15 participants, 62
-channels, 17 recordings. We start from a preprocessed version in 4~s
-segments at 250~Hz that was already normalized and soft-clipped to
-$\pm5$, band-pass it to 0.5--75~Hz, resample to 200~Hz per segment, and
-cut non-overlapping 100-sample windows, up to 15{,}000 in total. Participants 7,
-10 and 15 are held out for testing and 6 and 12 for validation; the rest
-train. Signals are standardized with training statistics. Each seed (0, 1,
-2) hides a different random half of the electrodes.
-DEAP \cite{koelstra2012deap}: 32 participants, 32 EEG electrodes, raw
-BioSemi recordings. We re-reference to the average, band-pass to
-0.5--75~Hz, resample to 200~Hz and take 60 evenly spaced 5~s segments per
-participant. Raw amplitudes differ by two orders of magnitude between
-participants, so each recording is centred per electrode, divided by one
-scalar (keeping the topography) and soft-clipped with $5\tanh(x/5)$ to
-match the SEED-IV input. Windows and the participant split are as for
-SEED-IV.
+\textbf{Data.} SEED-IV \cite{zheng2019emotionmeter} has 15 participants and
+62 channels. We use a preprocessed version (4~s segments at 250~Hz,
+already normalized and soft-clipped to $\pm5$), band-pass it to
+0.5--75~Hz and resample it to 200~Hz. DEAP \cite{koelstra2012deap} has 32
+participants with 32 EEG channels; from the raw BioSemi files we
+re-reference to the average, band-pass to 0.5--75~Hz, resample to 200~Hz
+and keep 60 evenly spaced 5~s segments per participant. Because raw
+amplitudes differ by two orders of magnitude between DEAP participants,
+each recording is centred per channel, divided by a single scalar (which
+keeps its topography) and soft-clipped with $5\tanh(x/5)$, as in the
+SEED-IV input. Both datasets are cut into non-overlapping 100-sample
+windows (at most 15{,}000). Participants 7, 10 and 15 are held out for
+testing and 6 and 12 for validation; the rest are used for training.
+Signals are standardized with training statistics.
 
-\textbf{Metrics.} NMSE is the squared error over all hidden entries divided by
-their energy, in the units of the preprocessed data; we also report
-Pearson correlation (PCC).
-Means $\pm$ standard deviations are over seeds (population SD). NMSE that
-averages per window and channel weights low-power channels heavily: on our
-data it doubles the spline's NMSE (0.14 to 0.29), so values from papers with
-other definitions or electrode layouts are not comparable with ours.
+\textbf{Metrics.} NMSE is the squared error summed over all hidden entries
+divided by their energy; we also report Pearson correlation (PCC) in the
+text. We give the mean $\pm$ population standard deviation over seeds 0, 1
+and 2. The definition matters: averaging NMSE per window and channel
+instead weights low-power channels heavily and doubles the spline's error
+on our data (0.14 to 0.29), so numbers from papers with other definitions
+or montages cannot be compared with ours.
 
-\textbf{Training.} Hidden size 64, four propagation layers, batch 32, Adam,
-EMA weights, Kaggle T4 GPUs (DEAP: one RTX 4050). All non-learned parameters (mixture weights,
-blend weight, kriging temperature) are fit on training or validation data
-only.
+\textbf{Training.} Hidden size 64, four propagation layers, batch size 32,
+Adam with EMA weights, on Kaggle T4 GPUs (DEAP on an RTX 4050). Everything
+that is not a network weight (mixture logits, blend weight, kriging
+temperature) is fitted on training or validation data only.
 
 \section{Results}
+\label{sec:results}
 
 \begin{table}[t]
 \centering
-\caption{Participant-held-out 50\% electrode loss on SEED-IV (3 seeds).
-Lower NMSE and higher PCC are better. Learned models are blended with their
-reference estimate (model alone in Table~\ref{tab:ablation}).
-$^\dagger$Selected on validation. --: not computed.}
+\small
+\caption{NMSE (lower is better) for 50\% electrode loss on held-out
+participants, mean $\pm$ SD over 3 seeds. Learned models are blended with
+their reference estimate. --: not run.}
 \label{tab:main}
 \setlength{\tabcolsep}{3pt}
-\begin{tabular}{lcc}
+\begin{tabular}{@{}lcc@{}}
 \toprule
-Method & NMSE & PCC\\
+Method & SEED-IV & DEAP\\
 \midrule
-\multicolumn{3}{l}{\emph{Interpolation}}\\
-KNN & 0.2905 $\pm$ 0.0069 & 0.846\\
-Feature propagation & 0.3216 $\pm$ 0.0076 & 0.835\\
-Spherical spline & 0.1496 $\pm$ 0.0060 & 0.925\\
-Kriging, pooled covariance & 0.1265 $\pm$ 0.0095 & 0.935\\
-Kriging, participant-weighted & 0.1160 $\pm$ 0.0089 & 0.940\\
-Kriging, participant-weighted, per band$^\dagger$ & 0.1196 $\pm$ 0.0065 & --\\
-\quad (same, without spline average) & 0.1142 $\pm$ 0.0075 & --\\
+\multicolumn{3}{@{}l}{\emph{Interpolation (no training)}}\\
+$k$-NN & 0.291 $\pm$ 0.007 & 0.946 $\pm$ 0.084\\
+Feature propagation & 0.322 $\pm$ 0.008 & 0.829 $\pm$ 0.081\\
+Spherical spline & 0.150 $\pm$ 0.006 & 0.981 $\pm$ 0.156\\
+Kriging, pooled & 0.127 $\pm$ 0.010 & 0.548 $\pm$ 0.060\\
+Kriging, participant-weighted & 0.116 $\pm$ 0.009 & 0.532 $\pm$ 0.056\\
+\quad per frequency band & \textbf{0.114} $\pm$ 0.008 & --\\
 \midrule
-\multicolumn{3}{l}{\emph{Learned}}\\
-GiFlow (published hyperparameters) & 0.3350 $\pm$ 0.0183 & 0.820\\
-Anchored Flow, spline source & 0.1357 $\pm$ 0.0071 & 0.931\\
-Regression control (same net, no flow) & 0.1332 $\pm$ 0.0084 & 0.931\\
-Anchored Flow, spline + kriging source & 0.1266 $\pm$ 0.0095 & 0.935\\
-\quad + participant-weighted kriging & 0.1161 $\pm$ 0.0088 & 0.940\\
-SRG-flow \cite{liu2026srgdiff}-style, spline + kriging source & 0.1266 $\pm$ 0.0095 & 0.935\\
+\multicolumn{3}{@{}l}{\emph{Learned}}\\
+GiFlow, published hyperparam. & 0.335 $\pm$ 0.018 & 1.660 $\pm$ 0.975\\
+Anchored Flow, spline source & 0.136 $\pm$ 0.007 & 0.677 $\pm$ 0.058\\
+Regression control (no flow) & 0.133 $\pm$ 0.008 & 0.623 $\pm$ 0.032\\
+Anchored Flow, + kriging & 0.127 $\pm$ 0.010 & 0.543 $\pm$ 0.053\\
+\quad participant-weighted & 0.116 $\pm$ 0.009 & \textbf{0.527} $\pm$ 0.050\\
+SRG-style flow, + kriging & 0.127 $\pm$ 0.010 & --\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[t]
 \centering
-\caption{Ablation from GiFlow with published hyperparameters (held-out participants;
-model output alone / blended).}
+\small
+\caption{Ablation on SEED-IV, adding one change at a time to GiFlow with
+published hyperparameters (NMSE of the model alone and blended).}
 \label{tab:ablation}
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{lcc}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcc@{}}
 \toprule
 Configuration & Model & Blend\\
 \midrule
-GiFlow, published hyperparameters & 0.3350 & --\\
-+ full-montage training, mixed source (heat/FP/KNN) & 0.2381 & 0.2196\\
-+ spherical spline in the mixture & 0.1511 & 0.1452\\
-+ validation every 100 steps & 0.1507 & 0.1450\\
+Published hyperparameters & 0.3350 & --\\
++ full montage, mixed source & 0.2381 & 0.2196\\
++ spline in the mixture & 0.1511 & 0.1452\\
++ validate every 100 steps & 0.1507 & 0.1450\\
 + learning rate $10^{-4}$ & 0.1405 & 0.1394\\
-+ weight decay, dropout 0.3 & 0.1367 & 0.1357\\
-+ validation every 25 steps & 0.1364 & 0.1346\\
++ weight decay, dropout & 0.1367 & 0.1357\\
++ validate every 25 steps & 0.1364 & 0.1346\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{table}[t]
-\centering
-\caption{Participant-held-out 50\% electrode loss on DEAP (32 electrodes,
-3 seeds, same settings as Table~\ref{tab:main}; kriging temperature
-$T=0.5$).}
-\label{tab:deap}
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{lcc}
-\toprule
-Method & NMSE & PCC\\
-\midrule
-\multicolumn{3}{l}{\emph{Interpolation}}\\
-KNN & 0.9463 $\pm$ 0.0844 & 0.314\\
-Feature propagation & 0.8287 $\pm$ 0.0811 & 0.414\\
-Spherical spline & 0.9812 $\pm$ 0.1563 & 0.549\\
-Kriging, pooled covariance & 0.5478 $\pm$ 0.0604 & 0.684\\
-Kriging, participant-weighted & 0.5315 $\pm$ 0.0557 & 0.693\\
-\midrule
-\multicolumn{3}{l}{\emph{Learned}}\\
-GiFlow (published hyperparameters) & 1.6599 $\pm$ 0.9750 & 0.323\\
-Anchored Flow, spline source & 0.6767 $\pm$ 0.0577 & 0.588\\
-Regression control (same net, no flow) & 0.6225 $\pm$ 0.0322 & 0.620\\
-Anchored Flow, spline + kriging source & 0.5426 $\pm$ 0.0533 & 0.684\\
-\quad + participant-weighted kriging & 0.5271 $\pm$ 0.0496 & 0.694\\
-\bottomrule
-\end{tabular}
-\end{table}
+\textbf{GiFlow out of the box.} With its published hyperparameters our
+GiFlow implementation reaches an NMSE of 0.335 on SEED-IV
+(Table~\ref{tab:main}), more than twice that of the spline (0.150) and
+worse even than $k$-NN. When we later let the model choose its source,
+the heat kernel received only 7--10\% of the weight.
 
-\textbf{Baseline GiFlow is weaker than the spline.} Table~\ref{tab:main}
-shows that our GiFlow implementation with published hyperparameters (0.335) is more than twice
-the spline's NMSE (0.150), and also worse than KNN. The fitted mixture puts
-only 7--10\% of its weight on GiFlow's own heat-kernel source.
+\textbf{What the fixes do.} Table~\ref{tab:ablation} adds the changes one
+at a time. Training on the full montage with a mixed source removes 29\%
+of the error. Putting the spline into the mixture, where it takes 54--56\%
+of the weight, removes another 37\%. More frequent validation does nothing
+on its own, but together with a lower learning rate and regularization the
+best checkpoint moves to 25--125 steps, and the model alone beats the
+spline on all three seeds (0.1335, 0.1463, 0.1303 against 0.1482, 0.1576,
+0.1430). Ensembling three models ($-0.5\%$) and fine-tuning on each test
+participant ($+7.5\%$) did not help.
 
-\textbf{Each fix contributes} (Table~\ref{tab:ablation}). Full-montage
-training with a mixed source cuts NMSE by 29\%; adding the spline to the
-mixture, where it receives 54--56\% of the weight, cuts it by a further 37\%.
-Step-level validation alone changes nothing at the original learning rate,
-but with a lower rate and regularization the validation optimum moves to
-25--125 steps and the model alone beats the spline on every seed (0.1367 vs
-0.1496; per seed 0.1335/0.1463/0.1303 vs 0.1482/0.1576/0.1430).
-Ensembles of three models (--0.5\%) and per-participant test-time
-fine-tuning (+7.5\%) did not help.
+\textbf{Is it the flow?} To find out, we trained the same network to
+predict $X-X_0$ in a single step at $t=0$ and used one-step inference.
+This regression control scores 0.1368 alone and 0.133 blended, the same as
+the flow. Once the source is good, iterating the transport adds nothing
+we can measure.
 
-\textbf{The flow is not the reason.} Training the same network to predict
-$X-X_0$ in one step at $t=0$, with one-step inference, gives 0.1368 alone and
-0.1332 blended, matching the flow. Starting from a strong source, the
-iterative transport adds nothing measurable to a single learned correction.
+\textbf{Kriging is hard to beat.} Pooled kriging reaches 0.127 without
+any training, and with participant weighting 0.116 (PCC 0.940, spline
+0.925), lower than every learned model. Fitting one covariance per band
+gives 0.114, although the variant that validation would pick scores 0.120.
+On a single participant split in time, where the covariance transfers
+exactly, kriging reaches $0.083\pm0.006$ against $0.143\pm0.006$ for the
+spline. When kriging is offered to the anchored source, the mixture puts
+99\% of its weight on it, and the flow ends up no better than kriging
+alone (0.127 vs 0.127; 0.116 vs 0.116 with participant weighting). The
+validation-fitted blend weights (0, 0, 0.30) tell the same story: the
+network learns no correction that carries over to new people. Adding
+SRGDiff-style residual guidance and step modulation \cite{liu2026srgdiff}
+changes nothing.
 
-\textbf{Linear kriging is the strongest baseline.} Pooled kriging reaches
-0.1265 without any training, and participant weighting per frequency band
-reaches 0.1142 (0.1196 for the variant preferred on validation), below
-every learned model above. On a single participant with a time split, where
-covariances transfer exactly, kriging reaches $0.083\pm0.006$ against the
-spline's $0.143\pm0.006$.
-
-\textbf{The flow cannot improve on kriging.} With kriging in the anchored
-source, the fitted mixture gives it 99\% of the weight. The flow alone is
-then slightly worse than kriging (0.1300 vs 0.1265; on one participant
-0.0849 vs 0.0830), and the validation-fitted blend weights (0, 0, 0.30)
-essentially return the kriging estimate (0.1266). Re-weighting the
-kriging covariance per test participant gives the same picture: 0.1188 for
-the flow, 0.1161 blended, and 0.1160 for the kriging alone. Once the source
-is the best linear predictor, the network learns no correction that
-transfers to new participants. Adding SRGDiff-style residual guidance and
-step modulation \cite{liu2026srgdiff} to the flow changes nothing (0.1297
-alone, 0.1266 blended, 0.1161 with participant weighting).
-
-\textbf{The same pattern holds on DEAP} (Table~\ref{tab:deap}). With only
-32 electrodes, half of them hidden, the spline is barely better than
-predicting zero (0.981), whereas pooled kriging reaches 0.548 and
-participant weighting 0.532. GiFlow with published hyperparameters is again
-worse than the spline and unstable across seeds (0.980, 0.961, 3.04). The
-spline-anchored flow improves on the spline by 31\% (0.677), but
-validation selected the initial or step-100 weights in all three seeds, so
-the gain comes mainly from the fitted source mixture (spline 39--43\%, FP
-32--33\%, heat kernel 21--24\%) rather than from a learned transport; the
-regression control, which kept training longer, does better (0.623). With
-kriging in the source the mixture again gives it 99\% of the weight and the
-flow stays within 1\% of kriging alone (0.543 vs 0.548; 0.527 vs 0.532 with
-participant weighting).
+\textbf{DEAP.} The sparser 32-electrode montage is much harder for the
+spline, which is barely better than predicting zero (0.981, PCC 0.55),
+while kriging reaches 0.548 and 0.532 with participant weighting (PCC
+0.69). GiFlow with published hyperparameters is again worse than the
+spline and unstable across seeds (0.980, 0.961, 3.04). The spline-anchored
+flow improves on the spline by 31\%, but validation kept the initial or
+step-100 weights in all three seeds, so this gain comes mostly from the
+source mixture (spline 39--43\%, FP 32--33\%, heat kernel 21--24\%). The
+regression control, which kept improving for longer, does better (0.623).
+With kriging in the source the flow stays within 1\% of kriging alone.
 
 \section{Discussion}
+\label{sec:discussion}
 
-Three lessons follow. First, imputation models transferred to EEG can be
-miscalibrated by protocol details: a mask that hides scored
-electrodes during training and per-epoch early stopping each cost more than
-any architectural change we tried. Second, the source matters more than the
-generator: the anchored source accounts for most of the 59\% gain, and a
-non-generative network with the same source matches the flow. Third, the
-spline is not the baseline to beat: a kriging predictor that uses
-training-participant covariance, re-weighted per participant from visible
-electrodes, outperforms all learned models we tested, on both a dense
-(62-electrode) and a sparse (32-electrode) montage. EEG reconstruction
-studies, including diffusion-based ones, should report such baselines under
-a shared NMSE definition.
+Three things stand out. Protocol details hurt GiFlow more than anything
+architectural: a training mask that hid the scored electrodes and
+per-epoch early stopping each cost more than any model change we tried.
+The starting point also matters more than the generator; the anchored
+source accounts for most of the improvement, and a network without flow
+matching does just as well from it. And the spline is the wrong bar to
+measure against. A kriging predictor built from training covariances,
+weighted towards participants who resemble the new one, beat every
+learned model on both datasets. In an earlier pilot with a different
+protocol (raw data, heat-kernel source, one seed), training GiFlow on DEAP
+and SEED-IV jointly did lower its NMSE compared with single-dataset
+training (DEAP 0.633 to 0.592, SEED-IV 0.757 to 0.633), but it still did
+not beat $k$-NN on the average of the two (0.613 vs 0.602).
 
-\begin{table}[t]
-\centering
-\caption{Earlier joint-training pilot (different protocol: raw DEAP and
-SEED-IV, shared 62-electrode space, 25 windows per participant,
-heat-kernel source, one seed). NMSE, participant-held-out 50\% electrode
-loss; lower is better.}
-\label{tab:joint}
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{lccc}
-\toprule
-Method & DEAP & SEED-IV & Macro\\
-\midrule
-Joint GiFlow & 0.5920 & 0.6333 & 0.6127\\
-Joint SRG-flow & 0.5979 & 0.6416 & 0.6198\\
-Joint KNN & 0.5931 & 0.6113 & 0.6022\\
-Joint feature propagation & 0.6052 & 0.6506 & 0.6279\\
-Single-dataset GiFlow & 0.6325 & 0.7571 & --\\
-Single-dataset SRG-flow & 0.8456 & 0.7216 & --\\
-Single-dataset KNN & 0.5964 & 0.6097 & --\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{Joint training.} An earlier pilot (Table~\ref{tab:joint}) trained
-GiFlow and an SRG-flow variant on raw DEAP \cite{koelstra2012deap} and
-SEED-IV jointly, aligning both to a shared 62-electrode space with
-dataset-specific normalization. Joint training lowered NMSE relative to
-single-dataset training for both learned models (GiFlow: DEAP 0.633 to
-0.592, SEED-IV 0.757 to 0.633), but neither beat $k$-nearest-neighbour
-interpolation on the macro average, in line with the findings above. Joint
-training also changed the estimated graph, so the gain cannot be attributed
-to the extra data alone. Joint training with anchored sources is left for
-future work.
-
-\textbf{Limitations.} Two datasets with random electrode subsets, short
-(0.5~s) windows, three seeds and three test participants each; differences of
-about 2\% (e.g., flow versus regression control) are within seed variation.
-GiFlow is our reimplementation, not the authors' code. The cerebellar CB1/CB2
-electrodes were placed at the 10-05 positions I1/I2 for the spline. Settings where interpolation is known to
-fail, such as contiguous missing regions or very sparse montages, and
-generative uses such as uncertainty estimation were not evaluated; these are
-where a flow model may still pay off. We did not reproduce published
-diffusion models under our protocol.
+\textbf{Limitations.} We used three test participants per dataset, three
+seeds, random electrode subsets and short (0.5~s) windows; differences of
+about 2\%, such as flow versus regression control, are within seed
+variation. GiFlow is our reimplementation, not the authors' code, and the
+cerebellar SEED-IV electrodes CB1/CB2 were placed at I1/I2 for the spline.
+We did not test contiguous missing regions or very sparse montages, where
+interpolation is known to struggle, nor generative uses such as
+uncertainty estimates; a flow model may still pay off there. We also did
+not rerun published diffusion models under our protocol.
 
 \section{Conclusion}
+\label{sec:conclusion}
 
-Anchoring GiFlow to classical estimates, training on the full montage and
-stopping early cut NMSE by 59\% and beat spherical-spline interpolation for
-held-out participants, but a non-generative control and a
-participant-weighted kriging baseline perform as well or better, and with
-kriging as its source the flow adds nothing, on SEED-IV and on DEAP. Strong, tuned linear baselines
-are essential when evaluating learned EEG reconstruction.
+Anchoring GiFlow to classical estimates, training it on the full montage
+and stopping it early cut its error by 59\% and let it beat the spline on
+unseen participants. A network without flow matching does as well,
+however, and participant-weighted kriging does better on both SEED-IV and
+DEAP. We recommend that work on learned EEG reconstruction report such
+linear baselines, under a shared error definition.
 
-\section*{Compliance with Ethical Standards}
-This study used the publicly available SEED-IV
-\cite{zheng2019emotionmeter} and DEAP \cite{koelstra2012deap} datasets;
-ethical approval was not required.
-\tbd{Authors: confirm against the dataset licence and institutional rules.}
+\section{Compliance with ethical standards}
+\label{sec:ethics}
 
-\section*{Acknowledgments}
-\tbd{Authors: add funding, conflicts of interest and any required AI-use
-disclosure.}
+This study used only the publicly available SEED-IV
+\cite{zheng2019emotionmeter} and DEAP \cite{koelstra2012deap} datasets,
+for which ethical approval was not required.
+\tbd{Authors: confirm against the dataset licences and institutional rules.}
+
+\section{Acknowledgments}
+\label{sec:acknowledgments}
+
+\tbd{Authors: add funding, a conflict-of-interest statement (e.g. ``The
+authors have no relevant financial or non-financial interests to
+disclose.'') and the AI-use disclosure required by IEEE.}
 
 \begin{thebibliography}{9}
 
