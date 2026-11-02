@@ -83,14 +83,14 @@ participants. \textcolor{red}{Our contributions are:}
 \item \textcolor{red}{\emph{multi-representation anchoring}, which starts the flow from a
 learned per-electrode mixture of classical reconstructions and,
 together with full-montage training and step-level early stopping, reduces
-the NMSE of GiFlow by 59\% on SEED-IV and brings it below the spline on
-DEAP;}
+the NMSE of GiFlow by 59\% on the SEED-IV dataset and brings it below the
+spline on the DEAP dataset;}
 \item \textcolor{red}{an analysis} of why GiFlow underperforms on \textcolor{red}{EEG, including a
 regression control (the same network without flow matching) that
 isolates the contribution of flow matching;}
 \item a \textcolor{red}{proposed} participant-weighted covariance kriging that \textcolor{red}{matches
-(within 1\%) or} outperforms all learned models we \textcolor{red}{evaluated on both the 62-electrode SEED-IV and the
-32-electrode DEAP} montage.
+(within 1\%) or} outperforms all learned models we \textcolor{red}{evaluated on both the SEED-IV (62 electrodes) and the DEAP
+(32 electrodes) datasets.}
 \end{itemize}
 
 \section{\textcolor{red}{Methodology}}
@@ -111,7 +111,7 @@ participants.}
 \subsection{Problem setting}
 
 A window $X\in\mathbb{R}^{N\times R}$ contains $N$ electrodes ($N=62$ for
-SEED-IV, 32 for DEAP) and $R$ time samples. For each test participant, a
+\textcolor{red}{the SEED-IV dataset and 32 for the DEAP dataset)} and $R$ time samples. For each test participant, a
 fixed random half of the electrodes is hidden, simulating \textcolor{red}{missing or
 failed electrodes;} a different half is drawn for each seed. The model
 receives $X_{\mathrm{cond}}=M\odot X$, where the binary mask $M$ removes
@@ -172,7 +172,7 @@ kernel above;} feature propagation (FP) \cite{rossi2022unreasonable}, \textcolor
 repeatedly averages over spatial-graph neighbours and resets the observed
 entries (40 iterations); $k$-NN, the mean of the visible spatial-graph
 neighbours; the spherical spline \cite{perrin1989spherical},} computed from
-10-05 electrode positions, \textcolor{red}{with the cerebellar SEED-IV electrodes CB1/CB2
+10-05 electrode positions, \textcolor{red}{with the cerebellar electrodes CB1/CB2 of the SEED-IV dataset
 placed at I1/I2; and, optionally, covariance kriging ($K=4$ or 5).} The logits are fitted on training
 windows by minimizing the transport cost on hidden entries and then
 frozen, \textcolor{red}{so each electrode relies} on the estimator that suits it best.
@@ -224,18 +224,18 @@ pooled covariance in the anchored source.
 \section{Experiments}
 \label{sec:experiments}
 
-\textbf{Data.} \textcolor{red}{The} SEED-IV \textcolor{red}{dataset} \cite{zheng2019emotionmeter} contains 15
+\textbf{Data.} \textcolor{red}{The SEED-IV dataset} \cite{zheng2019emotionmeter} contains 15
 participants recorded with 62 channels. We use a preprocessed version
 (4~s segments at 250~Hz, normalized and soft-clipped to $\pm5$), which we
 band-pass filter to 0.5--75~Hz and resample to 200~Hz.
 
-\textcolor{red}{The} DEAP \textcolor{red}{dataset} \cite{koelstra2012deap} contains 32 participants with 32 EEG
+\textcolor{red}{The DEAP dataset} \cite{koelstra2012deap} contains 32 participants with 32 EEG
 channels. From the raw BioSemi recordings, we apply an average reference,
 band-pass filter to 0.5--75~Hz, resample to 200~Hz and extract 60 evenly
 spaced 5~s segments per participant. \textcolor{red}{As} amplitudes differ by two orders
 of magnitude across participants, each recording is centred per channel,
 scaled by \textcolor{red}{one} factor (preserving its topography) and soft-clipped with
-$5\tanh(x/5)$, \textcolor{red}{as for SEED-IV.}
+$5\tanh(x/5)$, \textcolor{red}{as for the SEED-IV dataset.}
 
 Both datasets are divided into non-overlapping 100-sample windows (at most
 \textcolor{red}{15{,}000 in total, evenly subsampled).} Participants 7, 10 and 15 are held out for testing and 6 and 12
@@ -251,8 +251,8 @@ low-power channels and \textcolor{red}{at least} doubles the spline's NMSE on ou
 (0.14 to \textcolor{red}{0.30 for seed 0).}
 
 \textbf{Implementation.} Hidden size 64, four propagation layers, batch
-size 32, Adam with EMA weights; Kaggle T4 GPUs for SEED-IV and an RTX
-4050 for DEAP. All quantities other than network weights (mixture logits,
+size 32, Adam with EMA weights; Kaggle T4 GPUs for \textcolor{red}{the SEED-IV dataset} and
+an RTX 4050 for \textcolor{red}{the DEAP dataset.} All quantities other than network weights (mixture logits,
 blend weight and kriging temperature) are fitted on training or
 validation data only.
 
@@ -293,7 +293,7 @@ SRG-style flow, + kriging & 0.127 $\pm$ 0.010 & --\\
 \begin{table}[t]
 \centering
 \small
-\caption{Ablation on SEED-IV, adding one modification at a time to GiFlow
+\caption{Ablation on \textcolor{red}{the SEED-IV dataset,} adding one modification at a time to GiFlow
 with published hyperparameters (NMSE of the model alone and \textcolor{red}{blended
 with FP in the first modified row and with the spline thereafter}).}
 \label{tab:ablation}
@@ -314,7 +314,7 @@ Published hyperparameters & 0.3350 & --\\
 \end{table}
 
 \textbf{Baseline GiFlow.} With its published hyperparameters, \textcolor{red}{the} GiFlow
-implementation attains an NMSE of 0.335 on SEED-IV (Table~\ref{tab:main}),
+implementation attains an NMSE of 0.335 on \textcolor{red}{the SEED-IV dataset} (Table~\ref{tab:main}),
 more than twice that of the spline (0.150) and higher than that of
 $k$-NN. When the source mixture is learned, the heat kernel receives \textcolor{red}{at most
 11\%} of the weight.
@@ -345,7 +345,7 @@ vs 0.116 with participant weighting). The validation-fitted blend weights
 generalizes to new participants. \textcolor{red}{The SRG-style flow, with SRGDiff residual
 guidance \cite{liu2026srgdiff}, gives the same} result.
 
-\textbf{DEAP.} On the sparser 32-electrode montage, the spline performs
+\textcolor{red}{\textbf{DEAP dataset.}} On the sparser 32-electrode montage, the spline performs
 close to the trivial zero predictor (0.981, PCC 0.55), whereas kriging
 reaches 0.548, and 0.532 with participant weighting (PCC 0.69). GiFlow
 with published hyperparameters again underperforms the spline and is
@@ -382,8 +382,8 @@ Anchoring GiFlow to classical estimates, training on the full montage and
 applying step-level early stopping reduced its error by 59\% \textcolor{red}{on the SEED-IV dataset} and allowed
 it to outperform the spherical spline on unseen participants. However, an
 equivalent network without flow matching performs equally well, and
-participant-weighted kriging performs better on both \textcolor{red}{the} SEED-IV and DEAP
-\textcolor{red}{datasets}. We
+participant-weighted kriging performs better on both \textcolor{red}{the SEED-IV and DEAP
+datasets.} We
 recommend that studies of learned EEG \textcolor{red}{SR} report such linear baselines
 under a common error definition.
 
